@@ -98,6 +98,8 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
     private StoreChangeLogger<Bytes, byte[]> changeLogger;
     private StoreChangeLogger.ValueGetter<Bytes, byte[]> getter;
 
+    private volatile boolean open = false;
+
     public KeyValueStore<K, V> enableLogging() {
         loggingEnabled = true;
 
@@ -165,6 +167,7 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
 
         this.dbDir = new File(new File(context.stateDir(), parentDir), this.name);
         this.db = openDB(this.dbDir, this.options, TTL_SECONDS);
+        open = true;
     }
 
     public void init(ProcessorContext context, StateStore root) {
@@ -235,7 +238,13 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
     }
 
     @Override
-    public V get(K key) {
+    public boolean isOpen() {
+        return open;
+    }
+
+    @Override
+    public synchronized V get(K key) {
+        validateStoreOpen();
         if (cache != null) {
             RocksDBCacheEntry entry = cache.get(key);
             if (entry == null) {
@@ -259,6 +268,13 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
                 return serdes.valueFrom(byteValue);
             }
         }
+
+    }
+
+    private void validateStoreOpen() {
+        if (!open) {
+            throw new InvalidStateStoreException("Store " + this.name + " is currently closed");
+        }
     }
 
     private byte[] getInternal(byte[] rawKey) {
@@ -271,7 +287,8 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
     }
 
     @Override
-    public void put(K key, V value) {
+    public synchronized void put(K key, V value) {
+        validateStoreOpen();
         if (cache != null) {
             cacheDirtyKeys.add(key);
             cache.put(key, new RocksDBCacheEntry(value, true));
@@ -285,10 +302,11 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
                 changeLogger.maybeLogChange(this.getter);
             }
         }
+
     }
 
     @Override
-    public V putIfAbsent(K key, V value) {
+    public synchronized V putIfAbsent(K key, V value) {
         V originalValue = get(key);
         if (originalValue == null) {
             put(key, value);
@@ -338,14 +356,15 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
     }
 
     @Override
-    public V delete(K key) {
+    public synchronized V delete(K key) {
         V value = get(key);
         put(key, null);
         return value;
     }
 
     @Override
-    public KeyValueIterator<K, V> range(K from, K to) {
+    public synchronized KeyValueIterator<K, V> range(K from, K to) {
+        validateStoreOpen();
         // we need to flush the cache if necessary before returning the iterator
         if (cache != null)
             flushCache();
@@ -354,7 +373,8 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
     }
 
     @Override
-    public KeyValueIterator<K, V> all() {
+    public synchronized KeyValueIterator<K, V> all() {
+        validateStoreOpen();
         // we need to flush the cache if necessary before returning the iterator
         if (cache != null)
             flushCache();
@@ -404,8 +424,8 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
     private void flushCache() {
         // flush of the cache entries if necessary
         if (cache != null) {
-            List<KeyValue<byte[], byte[]>> putBatch = new ArrayList<>(cache.keys.size());
-            List<byte[]> deleteBatch = new ArrayList<>(cache.keys.size());
+            List<KeyValue<byte[], byte[]>> putBatch = new ArrayList<>(cache.size());
+            List<byte[]> deleteBatch = new ArrayList<>(cache.size());
 
             for (K key : cacheDirtyKeys) {
                 RocksDBCacheEntry entry = cache.get(key);
@@ -450,10 +470,11 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
 
         if (loggingEnabled)
             changeLogger.logChange(getter);
+
     }
 
     @Override
-    public void flush() {
+    public synchronized void flush() {
         if (db == null) {
             return;
         }
@@ -468,7 +489,7 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
     /**
      * @throws ProcessorStateException if flushing failed because of any internal store exceptions
      */
-    public void flushInternal() {
+    private void flushInternal() {
         try {
             db.flush(fOptions);
         } catch (RocksDBException e) {
@@ -477,12 +498,11 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
     }
 
     @Override
-    public void close() {
-
-        if (db == null) {
+    public synchronized void close() {
+        if (!open) {
             return;
         }
-
+        open = false;
         flush();
         options.dispose();
         wOptions.dispose();
