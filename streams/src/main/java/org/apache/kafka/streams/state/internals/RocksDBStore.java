@@ -89,7 +89,7 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
 
     private RocksDB db;
 
-    // the following option objects will be created at constructor and disposed at close()
+    // the following option objects will be created in the constructor and closed in the close() method
     private Options options;
     private WriteOptions wOptions;
     private FlushOptions fOptions;
@@ -350,9 +350,7 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
 
     // this function is only called in flushCache()
     private void putAllInternal(List<KeyValue<byte[], byte[]>> entries) {
-        WriteBatch batch = new WriteBatch();
-
-        try {
+        try (WriteBatch batch = new WriteBatch()) {
             for (KeyValue<byte[], byte[]> entry : entries) {
                 batch.put(entry.key, entry.value);
             }
@@ -360,8 +358,6 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
             db.write(wOptions, batch);
         } catch (RocksDBException e) {
             throw new ProcessorStateException("Error while batch writing to store " + this.name, e);
-        } finally {
-            batch.dispose();
         }
     }
 
@@ -514,9 +510,9 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
         }
         open = false;
         flush();
-        options.dispose();
-        wOptions.dispose();
-        fOptions.dispose();
+        options.close();
+        wOptions.close();
+        fOptions.close();
         db.close();
 
         options = null;
@@ -570,7 +566,7 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
 
         @Override
         public void close() {
-            iter.dispose();
+            iter.close();
         }
 
     }
