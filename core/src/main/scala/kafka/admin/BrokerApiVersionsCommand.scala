@@ -48,6 +48,7 @@ object BrokerApiVersionsCommand {
         case Failure(v) => out.print(s"${broker} -> ERROR: ${v}\n")
       }
     }
+    adminClient.close()
   }
 
   private def createAdminClient(opts: BrokerVersionCommandOptions): AdminClient = {
@@ -63,7 +64,7 @@ object BrokerApiVersionsCommand {
     val BootstrapServerDoc = "REQUIRED: The server to connect to."
     val CommandConfigDoc = "A property file containing configs to be passed to Admin Client."
 
-    val parser = new OptionParser
+    val parser = new OptionParser(false)
     val commandConfigOpt = parser.accepts("command-config", CommandConfigDoc)
                                  .withRequiredArg
                                  .describedAs("command config property file")

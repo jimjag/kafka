@@ -16,23 +16,24 @@
  */
 package org.apache.kafka.common.utils;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.EOFException;
-import java.nio.channels.FileChannel;
-import java.nio.file.StandardOpenOption;
-import java.util.Arrays;
-import java.util.Collections;
-import java.io.Closeable;
-import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.util.Random;
-
 import org.apache.kafka.test.TestUtils;
 import org.easymock.EasyMock;
 import org.easymock.IAnswer;
 import org.junit.Test;
 
+import java.io.Closeable;
+import java.io.DataOutputStream;
+import java.io.EOFException;
+import java.io.File;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Random;
 
 import static org.apache.kafka.common.utils.Utils.formatAddress;
 import static org.apache.kafka.common.utils.Utils.getHost;
@@ -82,7 +83,7 @@ public class UtilsTest {
         assertEquals("1", Utils.join(Arrays.asList("1"), ","));
         assertEquals("1,2,3", Utils.join(Arrays.asList(1, 2, 3), ","));
     }
-
+    
     @Test
     public void testAbs() {
         assertEquals(0, Utils.abs(Integer.MIN_VALUE));
@@ -90,6 +91,95 @@ public class UtilsTest {
         assertEquals(10, Utils.abs(10));
         assertEquals(0, Utils.abs(0));
         assertEquals(1, Utils.abs(-1));
+    }
+
+    @Test
+    public void writeToBuffer() throws IOException {
+        byte[] input = {0, 1, 2, 3, 4, 5};
+        ByteBuffer source = ByteBuffer.wrap(input);
+
+        doTestWriteToByteBuffer(source, ByteBuffer.allocate(input.length));
+        doTestWriteToByteBuffer(source, ByteBuffer.allocateDirect(input.length));
+        assertEquals(0, source.position());
+
+        source.position(2);
+        doTestWriteToByteBuffer(source, ByteBuffer.allocate(input.length));
+        doTestWriteToByteBuffer(source, ByteBuffer.allocateDirect(input.length));
+    }
+
+    private void doTestWriteToByteBuffer(ByteBuffer source, ByteBuffer dest) throws IOException {
+        int numBytes = source.remaining();
+        int position = source.position();
+        DataOutputStream out = new DataOutputStream(new ByteBufferOutputStream(dest));
+        Utils.writeTo(out, source, source.remaining());
+        dest.flip();
+        assertEquals(numBytes, dest.remaining());
+        assertEquals(position, source.position());
+        assertEquals(source, dest);
+    }
+
+    @Test
+    public void toArray() {
+        byte[] input = {0, 1, 2, 3, 4};
+        ByteBuffer buffer = ByteBuffer.wrap(input);
+        assertArrayEquals(input, Utils.toArray(buffer));
+        assertEquals(0, buffer.position());
+
+        assertArrayEquals(new byte[] {1, 2}, Utils.toArray(buffer, 1, 2));
+        assertEquals(0, buffer.position());
+
+        buffer.position(2);
+        assertArrayEquals(new byte[] {2, 3, 4}, Utils.toArray(buffer));
+        assertEquals(2, buffer.position());
+    }
+
+    @Test
+    public void toArrayDirectByteBuffer() {
+        byte[] input = {0, 1, 2, 3, 4};
+        ByteBuffer buffer = ByteBuffer.allocateDirect(5);
+        buffer.put(input);
+        buffer.rewind();
+
+        assertArrayEquals(input, Utils.toArray(buffer));
+        assertEquals(0, buffer.position());
+
+        assertArrayEquals(new byte[] {1, 2}, Utils.toArray(buffer, 1, 2));
+        assertEquals(0, buffer.position());
+
+        buffer.position(2);
+        assertArrayEquals(new byte[] {2, 3, 4}, Utils.toArray(buffer));
+        assertEquals(2, buffer.position());
+    }
+
+    @Test
+    public void utf8ByteArraySerde() {
+        String utf8String = "A\u00ea\u00f1\u00fcC";
+        byte[] utf8Bytes = utf8String.getBytes(StandardCharsets.UTF_8);
+        assertArrayEquals(utf8Bytes, Utils.utf8(utf8String));
+        assertEquals(utf8Bytes.length, Utils.utf8Length(utf8String));
+        assertEquals(utf8String, Utils.utf8(utf8Bytes));
+    }
+
+    @Test
+    public void utf8ByteBufferSerde() {
+        doTestUtf8ByteBuffer(ByteBuffer.allocate(20));
+        doTestUtf8ByteBuffer(ByteBuffer.allocateDirect(20));
+    }
+
+    private void doTestUtf8ByteBuffer(ByteBuffer utf8Buffer) {
+        String utf8String = "A\u00ea\u00f1\u00fcC";
+        byte[] utf8Bytes = utf8String.getBytes(StandardCharsets.UTF_8);
+
+        utf8Buffer.position(4);
+        utf8Buffer.put(utf8Bytes);
+
+        utf8Buffer.position(4);
+        assertEquals(utf8String, Utils.utf8(utf8Buffer, utf8Bytes.length));
+        assertEquals(4, utf8Buffer.position());
+
+        utf8Buffer.position(0);
+        assertEquals(utf8String, Utils.utf8(utf8Buffer, 4, utf8Bytes.length));
+        assertEquals(0, utf8Buffer.position());
     }
 
     private void subTest(ByteBuffer buffer) {
@@ -337,64 +427,26 @@ public class UtilsTest {
         }
     }
 
-    @Test
-    public void testReadUnsignedIntLEFromArray() {
-        byte[] array1 = {0x01, 0x02, 0x03, 0x04, 0x05};
-        assertEquals(0x04030201, Utils.readUnsignedIntLE(array1, 0));
-        assertEquals(0x05040302, Utils.readUnsignedIntLE(array1, 1));
+    @Test(timeout = 120000)
+    public void testRecursiveDelete() throws IOException {
+        Utils.delete(null); // delete of null does nothing.
 
-        byte[] array2 = {(byte) 0xf1, (byte) 0xf2, (byte) 0xf3, (byte) 0xf4, (byte) 0xf5, (byte) 0xf6};
-        assertEquals(0xf4f3f2f1, Utils.readUnsignedIntLE(array2, 0));
-        assertEquals(0xf6f5f4f3, Utils.readUnsignedIntLE(array2, 2));
-    }
+        // Test that deleting a temporary file works.
+        File tempFile = TestUtils.tempFile();
+        Utils.delete(tempFile);
+        assertFalse(Files.exists(tempFile.toPath()));
 
-    @Test
-    public void testReadUnsignedIntLEFromInputStream() throws IOException {
-        byte[] array1 = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09};
-        ByteArrayInputStream is1 = new ByteArrayInputStream(array1);
-        assertEquals(0x04030201, Utils.readUnsignedIntLE(is1));
-        assertEquals(0x08070605, Utils.readUnsignedIntLE(is1));
+        // Test recursive deletes
+        File tempDir = TestUtils.tempDirectory();
+        File tempDir2 = TestUtils.tempDirectory(tempDir.toPath(), "a");
+        TestUtils.tempDirectory(tempDir.toPath(), "b");
+        TestUtils.tempDirectory(tempDir2.toPath(), "c");
+        Utils.delete(tempDir);
+        assertFalse(Files.exists(tempDir.toPath()));
+        assertFalse(Files.exists(tempDir2.toPath()));
 
-        byte[] array2 = {(byte) 0xf1, (byte) 0xf2, (byte) 0xf3, (byte) 0xf4, (byte) 0xf5, (byte) 0xf6, (byte) 0xf7, (byte) 0xf8};
-        ByteArrayInputStream is2 = new ByteArrayInputStream(array2);
-        assertEquals(0xf4f3f2f1, Utils.readUnsignedIntLE(is2));
-        assertEquals(0xf8f7f6f5, Utils.readUnsignedIntLE(is2));
-    }
-
-    @Test
-    public void testWriteUnsignedIntLEToArray() {
-        int value1 = 0x04030201;
-
-        byte[] array1 = new byte[4];
-        Utils.writeUnsignedIntLE(array1, 0, value1);
-        assertArrayEquals(new byte[] {0x01, 0x02, 0x03, 0x04}, array1);
-
-        array1 = new byte[8];
-        Utils.writeUnsignedIntLE(array1, 2, value1);
-        assertArrayEquals(new byte[] {0, 0, 0x01, 0x02, 0x03, 0x04, 0, 0}, array1);
-
-        int value2 = 0xf4f3f2f1;
-
-        byte[] array2 = new byte[4];
-        Utils.writeUnsignedIntLE(array2, 0, value2);
-        assertArrayEquals(new byte[] {(byte) 0xf1, (byte) 0xf2, (byte) 0xf3, (byte) 0xf4}, array2);
-
-        array2 = new byte[8];
-        Utils.writeUnsignedIntLE(array2, 2, value2);
-        assertArrayEquals(new byte[] {0, 0, (byte) 0xf1, (byte) 0xf2, (byte) 0xf3, (byte) 0xf4, 0, 0}, array2);
-    }
-
-    @Test
-    public void testWriteUnsignedIntLEToOutputStream() throws IOException {
-        int value1 = 0x04030201;
-        ByteArrayOutputStream os1 = new ByteArrayOutputStream();
-        Utils.writeUnsignedIntLE(os1, value1);
-        Utils.writeUnsignedIntLE(os1, value1);
-        assertArrayEquals(new byte[] {0x01, 0x02, 0x03, 0x04, 0x01, 0x02, 0x03, 0x04}, os1.toByteArray());
-
-        int value2 = 0xf4f3f2f1;
-        ByteArrayOutputStream os2 = new ByteArrayOutputStream();
-        Utils.writeUnsignedIntLE(os2, value2);
-        assertArrayEquals(new byte[] {(byte) 0xf1, (byte) 0xf2, (byte) 0xf3, (byte) 0xf4}, os2.toByteArray());
+        // Test that deleting a non-existent directory hierarchy works.
+        Utils.delete(tempDir);
+        assertFalse(Files.exists(tempDir.toPath()));
     }
 }

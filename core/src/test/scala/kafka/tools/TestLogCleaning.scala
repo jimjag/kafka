@@ -49,7 +49,7 @@ import scala.collection.JavaConverters._
 object TestLogCleaning {
 
   def main(args: Array[String]) {
-    val parser = new OptionParser
+    val parser = new OptionParser(false)
     val numMessagesOpt = parser.accepts("messages", "The number of messages to send or consume.")
                                .withRequiredArg
                                .describedAs("count")
@@ -140,13 +140,13 @@ object TestLogCleaning {
     require(dir.exists, "Non-existent directory: " + dir.getAbsolutePath)
     for (file <- dir.list.sorted; if file.endsWith(Log.LogFileSuffix)) {
       val fileRecords = FileRecords.open(new File(dir, file))
-      for (entry <- fileRecords.shallowEntries.asScala) {
-        val key = TestUtils.readString(entry.record.key)
-        val content = 
-          if(entry.record.hasNullValue)
+      for (entry <- fileRecords.records.asScala) {
+        val key = TestUtils.readString(entry.key)
+        val content =
+          if (!entry.hasValue)
             null
           else
-            TestUtils.readString(entry.record.value)
+            TestUtils.readString(entry.value)
         println("offset = %s, key = %s, content = %s".format(entry.offset, key, content))
       }
     }
