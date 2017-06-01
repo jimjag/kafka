@@ -14,29 +14,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.streams.errors;
+package org.apache.kafka.common.serialization;
 
+import org.apache.kafka.common.errors.SerializationException;
 
-/**
- * Indicates that none of the specified {@link org.apache.kafka.streams.StreamsConfig#BOOTSTRAP_SERVERS_CONFIG brokers}
- * could be found.
- *
- * @see org.apache.kafka.streams.StreamsConfig
- */
-public class BrokerNotFoundException extends StreamsException {
+import java.util.Map;
 
-    private final static long serialVersionUID = 1L;
+public class ShortDeserializer implements Deserializer<Short> {
 
-    public BrokerNotFoundException(final String message) {
-        super(message);
+    public void configure(Map<String, ?> configs, boolean isKey) {
+        // nothing to do
     }
 
-    public BrokerNotFoundException(final String message, final Throwable throwable) {
-        super(message, throwable);
+    public Short deserialize(String topic, byte[] data) {
+        if (data == null)
+            return null;
+        if (data.length != 2) {
+            throw new SerializationException("Size of data received by ShortDeserializer is not 2");
+        }
+
+        short value = 0;
+        for (byte b : data) {
+            value <<= 8;
+            value |= b & 0xFF;
+        }
+        return value;
     }
 
-    public BrokerNotFoundException(final Throwable throwable) {
-        super(throwable);
+    public void close() {
+        // nothing to do
     }
-
 }
