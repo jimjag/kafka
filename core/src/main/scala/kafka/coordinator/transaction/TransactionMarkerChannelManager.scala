@@ -17,10 +17,8 @@
 package kafka.coordinator.transaction
 
 
-import java.util
-import java.util.concurrent.{BlockingQueue, LinkedBlockingQueue}
-
 import kafka.common.{InterBrokerSendThread, RequestAndCompletionHandler}
+import kafka.metrics.KafkaMetricsGroup
 import kafka.server.{DelayedOperationPurgatory, KafkaConfig, MetadataCache}
 import kafka.utils.Logging
 import org.apache.kafka.clients._
@@ -32,6 +30,11 @@ import org.apache.kafka.common.security.JaasContext
 import org.apache.kafka.common.utils.Time
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.requests.WriteTxnMarkersRequest.TxnMarkerEntry
+
+import com.yammer.metrics.core.Gauge
+
+import java.util
+import java.util.concurrent.{BlockingQueue, ConcurrentHashMap, LinkedBlockingQueue}
 
 import collection.JavaConverters._
 import scala.collection.{concurrent, immutable, mutable}
@@ -82,7 +85,8 @@ object TransactionMarkerChannelManager {
       networkClient,
       txnStateManager,
       txnMarkerPurgatory,
-      time)
+      time
+    )
   }
 
 }
@@ -113,7 +117,7 @@ class TxnMarkerQueue(@volatile private var destination: Node) {
 
   def node: Node = destination
 
-  def totalNumMarkers(): Int = markersPerTxnTopicPartition.map { case(_, queue) => queue.size()}.sum
+  def totalNumMarkers: Int = markersPerTxnTopicPartition.map { case(_, queue) => queue.size()}.sum
 
   // visible for testing
   def totalNumMarkers(txnTopicPartition: Int): Int = markersPerTxnTopicPartition.get(txnTopicPartition).fold(0)(_.size())
@@ -124,17 +128,35 @@ class TransactionMarkerChannelManager(config: KafkaConfig,
                                       networkClient: NetworkClient,
                                       txnStateManager: TransactionStateManager,
                                       txnMarkerPurgatory: DelayedOperationPurgatory[DelayedTxnMarker],
-                                      time: Time) extends Logging {
-
-  private val markersQueuePerBroker: concurrent.Map[Int, TxnMarkerQueue] = concurrent.TrieMap.empty[Int, TxnMarkerQueue]
-
-  private val markersQueueForUnknownBroker = new TxnMarkerQueue(Node.noNode)
+                                      time: Time) extends Logging with KafkaMetricsGroup {
 
   private val interBrokerListenerName: ListenerName = config.interBrokerListenerName
 
   private val txnMarkerSendThread: InterBrokerSendThread = {
     new InterBrokerSendThread("TxnMarkerSenderThread-" + config.brokerId, networkClient, drainQueuedTransactionMarkers, time)
   }
+
+  private val markersQueuePerBroker: concurrent.Map[Int, TxnMarkerQueue] = new ConcurrentHashMap[Int, TxnMarkerQueue]().asScala
+
+  private val markersQueueForUnknownBroker = new TxnMarkerQueue(Node.noNode)
+
+  private val txnLogAppendRetryQueue = new LinkedBlockingQueue[TxnLogAppend]()
+
+  newGauge(
+    "UnknownDestinationQueueSize",
+    new Gauge[Int] {
+      def value: Int = markersQueueForUnknownBroker.totalNumMarkers
+    },
+    Map("broker-id" -> config.brokerId.toString)
+  )
+
+  newGauge(
+    "CompleteTxnLogAppendQueueSize",
+    new Gauge[Int] {
+      def value: Int = txnLogAppendRetryQueue.size
+    },
+    Map("broker-id" -> config.brokerId.toString)
+  )
 
   def start(): Unit = {
     txnMarkerSendThread.start()
@@ -172,7 +194,18 @@ class TransactionMarkerChannelManager(config: KafkaConfig,
     trace(s"Added marker ${txnIdAndMarker.txnMarkerEntry} for transactional id ${txnIdAndMarker.txnId} to destination broker $brokerId")
   }
 
+  def retryLogAppends(): Unit = {
+    val txnLogAppendRetries: java.util.List[TxnLogAppend] = new util.ArrayList[TxnLogAppend]()
+    txnLogAppendRetryQueue.drainTo(txnLogAppendRetries)
+    debug(s"retrying: ${txnLogAppendRetries.size} transaction log appends")
+    txnLogAppendRetries.asScala.foreach { txnLogAppend =>
+      tryAppendToLog(txnLogAppend)
+    }
+  }
+
+
   private[transaction] def drainQueuedTransactionMarkers(): Iterable[RequestAndCompletionHandler] = {
+    retryLogAppends()
     val txnIdAndMarkerEntries: java.util.List[TxnIdAndMarkerEntry] = new util.ArrayList[TxnIdAndMarkerEntry]()
     markersQueueForUnknownBroker.forEachTxnTopicPartition { case (_, queue) =>
       queue.drainTo(txnIdAndMarkerEntries)
@@ -189,7 +222,7 @@ class TransactionMarkerChannelManager(config: KafkaConfig,
       addTxnMarkersToBrokerQueue(transactionalId, producerId, producerEpoch, txnResult, coordinatorEpoch, topicPartitions)
     }
 
-    markersQueuePerBroker.map { case (brokerId: Int, brokerRequestQueue: TxnMarkerQueue) =>
+    markersQueuePerBroker.map { case (_, brokerRequestQueue: TxnMarkerQueue) =>
       val txnIdAndMarkerEntries: java.util.List[TxnIdAndMarkerEntry] = new util.ArrayList[TxnIdAndMarkerEntry]()
       brokerRequestQueue.forEachTxnTopicPartition { case (_, queue) =>
         queue.drainTo(txnIdAndMarkerEntries)
@@ -227,26 +260,7 @@ class TransactionMarkerChannelManager(config: KafkaConfig,
               if (epochAndMetadata.coordinatorEpoch == coordinatorEpoch) {
                 debug(s"Updating $transactionalId's transaction state to $txnMetadata with coordinator epoch $coordinatorEpoch for $transactionalId succeeded")
 
-                // try to append to the transaction log
-                def retryAppendCallback(error: Errors): Unit =
-                  error match {
-                    case Errors.NONE =>
-                      trace(s"Completed transaction for $transactionalId with coordinator epoch $coordinatorEpoch, final state: state after commit: ${txnMetadata.state}")
-
-                    case Errors.NOT_COORDINATOR =>
-                      info(s"No longer the coordinator for transactionalId: $transactionalId while trying to append to transaction log, skip writing to transaction log")
-
-                    case Errors.COORDINATOR_NOT_AVAILABLE =>
-                      warn(s"Failed updating transaction state for $transactionalId when appending to transaction log due to ${error.exceptionName}. retrying")
-
-                      // retry appending
-                      txnStateManager.appendTransactionToLog(transactionalId, coordinatorEpoch, newMetadata, retryAppendCallback)
-
-                    case errors: Errors =>
-                      throw new IllegalStateException(s"Unexpected error ${errors.exceptionName} while appending to transaction log for $transactionalId")
-                  }
-
-                txnStateManager.appendTransactionToLog(transactionalId, coordinatorEpoch, newMetadata, retryAppendCallback)
+                tryAppendToLog(TxnLogAppend(transactionalId, coordinatorEpoch, txnMetadata, newMetadata))
               } else {
                 info(s"Updating $transactionalId's transaction state to $txnMetadata with coordinator epoch $coordinatorEpoch for $transactionalId failed after the transaction markers " +
                   s"has been sent to brokers. The cached metadata have been changed to $epochAndMetadata since preparing to send markers")
@@ -266,6 +280,28 @@ class TransactionMarkerChannelManager(config: KafkaConfig,
     txnMarkerPurgatory.tryCompleteElseWatch(delayedTxnMarker, Seq(transactionalId))
 
     addTxnMarkersToBrokerQueue(transactionalId, txnMetadata.producerId, txnMetadata.producerEpoch, txnResult, coordinatorEpoch, txnMetadata.topicPartitions.toSet)
+  }
+
+  private def tryAppendToLog(txnLogAppend: TxnLogAppend) = {
+    // try to append to the transaction log
+    def appendCallback(error: Errors): Unit =
+      error match {
+        case Errors.NONE =>
+          trace(s"Completed transaction for ${txnLogAppend.transactionalId} with coordinator epoch ${txnLogAppend.coordinatorEpoch}, final state: state after commit: ${txnLogAppend.txnMetadata.state}")
+
+        case Errors.NOT_COORDINATOR =>
+          info(s"No longer the coordinator for transactionalId: ${txnLogAppend.transactionalId} while trying to append to transaction log, skip writing to transaction log")
+
+        case Errors.COORDINATOR_NOT_AVAILABLE =>
+          warn(s"Failed updating transaction state for ${txnLogAppend.transactionalId} when appending to transaction log due to ${error.exceptionName}. retrying")
+          // enqueue for retry
+          txnLogAppendRetryQueue.add(txnLogAppend)
+
+        case errors: Errors =>
+          throw new IllegalStateException(s"Unexpected error ${errors.exceptionName} while appending to transaction log for ${txnLogAppend.transactionalId}")
+      }
+
+    txnStateManager.appendTransactionToLog(txnLogAppend.transactionalId, txnLogAppend.coordinatorEpoch, txnLogAppend.newMetadata, appendCallback)
   }
 
   def addTxnMarkersToBrokerQueue(transactionalId: String, producerId: Long, producerEpoch: Short,
@@ -351,3 +387,5 @@ class TransactionMarkerChannelManager(config: KafkaConfig,
 }
 
 case class TxnIdAndMarkerEntry(txnId: String, txnMarkerEntry: TxnMarkerEntry)
+
+case class TxnLogAppend(transactionalId: String, coordinatorEpoch: Int, txnMetadata: TransactionMetadata, newMetadata: TxnTransitMetadata)
