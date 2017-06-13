@@ -97,8 +97,7 @@ public class TransactionManager {
                 case INITIALIZING:
                     return source == UNINITIALIZED;
                 case READY:
-                    return source == INITIALIZING || source == COMMITTING_TRANSACTION
-                            || source == ABORTING_TRANSACTION || source == ABORTABLE_ERROR;
+                    return source == INITIALIZING || source == COMMITTING_TRANSACTION || source == ABORTING_TRANSACTION;
                 case IN_TRANSACTION:
                     return source == READY;
                 case COMMITTING_TRANSACTION:
@@ -106,8 +105,7 @@ public class TransactionManager {
                 case ABORTING_TRANSACTION:
                     return source == IN_TRANSACTION || source == ABORTABLE_ERROR;
                 case ABORTABLE_ERROR:
-                    return source == IN_TRANSACTION || source == COMMITTING_TRANSACTION || source == ABORTING_TRANSACTION
-                            || source == ABORTABLE_ERROR;
+                    return source == IN_TRANSACTION || source == COMMITTING_TRANSACTION || source == ABORTABLE_ERROR;
                 case FATAL_ERROR:
                 default:
                     // We can transition to FATAL_ERROR unconditionally.
@@ -179,7 +177,7 @@ public class TransactionManager {
         ensureTransactional();
         maybeFailWithError();
         transitionTo(State.COMMITTING_TRANSACTION);
-        return beginCompletingTransaction(true);
+        return beginCompletingTransaction(TransactionResult.COMMIT);
     }
 
     public synchronized TransactionalRequestResult beginAbortingTransaction() {
@@ -190,14 +188,12 @@ public class TransactionManager {
 
         // We're aborting the transaction, so there should be no need to add new partitions
         newPartitionsInTransaction.clear();
-        return beginCompletingTransaction(false);
+        return beginCompletingTransaction(TransactionResult.ABORT);
     }
 
-    private TransactionalRequestResult beginCompletingTransaction(boolean isCommit) {
+    private TransactionalRequestResult beginCompletingTransaction(TransactionResult transactionResult) {
         if (!newPartitionsInTransaction.isEmpty())
             enqueueRequest(addPartitionsToTransactionHandler());
-
-        TransactionResult transactionResult = isCommit ? TransactionResult.COMMIT : TransactionResult.ABORT;
         EndTxnRequest.Builder builder = new EndTxnRequest.Builder(transactionalId, producerIdAndEpoch.producerId,
                 producerIdAndEpoch.epoch, transactionResult);
         EndTxnHandler handler = new EndTxnHandler(builder);
@@ -222,10 +218,9 @@ public class TransactionManager {
     }
 
     public synchronized void maybeAddPartitionToTransaction(TopicPartition topicPartition) {
-        if (currentState != State.IN_TRANSACTION)
-            throw new IllegalStateException("Cannot add partitions to a transaction in state " + currentState);
+        failIfNotReadyForSend();
 
-        if (partitionsInTransaction.contains(topicPartition) || pendingPartitionsInTransaction.contains(topicPartition))
+        if (isPartitionAdded(topicPartition) || isPartitionPendingAdd(topicPartition))
             return;
 
         log.debug("{}Begin adding new partition {} to transaction", logPrefix, topicPartition);
@@ -286,6 +281,11 @@ public class TransactionManager {
     }
 
     synchronized void transitionToAbortableError(RuntimeException exception) {
+        if (currentState == State.ABORTING_TRANSACTION) {
+            log.debug("Skipping transition to abortable error state since the transaction is already being " +
+                    "aborted. Underlying exception: ", exception);
+            return;
+        }
         transitionTo(State.ABORTABLE_ERROR, exception);
     }
 
@@ -504,13 +504,10 @@ public class TransactionManager {
 
     private boolean maybeTerminateRequestWithError(TxnRequestHandler requestHandler) {
         if (hasError()) {
-            if (requestHandler instanceof EndTxnHandler) {
-                // we allow abort requests to break out of the error state. The state and the last error
-                // will be cleared when the request returns
-                EndTxnHandler endTxnHandler = (EndTxnHandler) requestHandler;
-                if (endTxnHandler.builder.result() == TransactionResult.ABORT)
-                    return false;
-            }
+            if (hasAbortableError() && requestHandler instanceof FindCoordinatorHandler)
+                // No harm letting the FindCoordinator request go through if we're expecting to abort
+                return false;
+
             requestHandler.fail(lastError);
             return true;
         }
@@ -542,6 +539,8 @@ public class TransactionManager {
         transitionTo(State.READY);
         lastError = null;
         transactionStarted = false;
+        newPartitionsInTransaction.clear();
+        pendingPartitionsInTransaction.clear();
         partitionsInTransaction.clear();
     }
 
@@ -759,15 +758,22 @@ public class TransactionManager {
                 }
             }
 
+            Set<TopicPartition> partitions = errors.keySet();
+
+            // Remove the partitions from the pending set regardless of the result. We use the presence
+            // of partitions in the pending set to know when it is not safe to send batches. However, if
+            // the partitions failed to be added and we enter an error state, we expect the batches to be
+            // aborted anyway. In this case, we must be able to continue sending the batches which are in
+            // retry for partitions that were successfully added.
+            pendingPartitionsInTransaction.removeAll(partitions);
+
             if (!unauthorizedTopics.isEmpty()) {
                 abortableError(new TopicAuthorizationException(unauthorizedTopics));
             } else if (hasPartitionErrors) {
-                abortableError(new KafkaException("Could not add partitions to transaction due to partition level errors"));
+                abortableError(new KafkaException("Could not add partitions to transaction due to errors: " + errors));
             } else {
-                Set<TopicPartition> addedPartitions = errors.keySet();
-                log.debug("{}Successfully added partitions {} to transaction", logPrefix, addedPartitions);
-                partitionsInTransaction.addAll(addedPartitions);
-                pendingPartitionsInTransaction.removeAll(addedPartitions);
+                log.debug("{}Successfully added partitions {} to transaction", logPrefix, partitions);
+                partitionsInTransaction.addAll(partitions);
                 transactionStarted = true;
                 result.done();
             }
