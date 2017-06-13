@@ -148,6 +148,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     private static final Logger log = LoggerFactory.getLogger(KafkaProducer.class);
     private static final AtomicInteger PRODUCER_CLIENT_ID_SEQUENCE = new AtomicInteger(1);
     private static final String JMX_PREFIX = "kafka.producer";
+    public static final String NETWORK_THREAD_PREFIX = "kafka-producer-network-thread";
 
     private String clientId;
     // Visible for testing
@@ -322,7 +323,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     config.getLong(ProducerConfig.RETRY_BACKOFF_MS_CONFIG),
                     this.transactionManager,
                     apiVersions);
-            String ioThreadName = "kafka-producer-network-thread" + (clientId.length() > 0 ? " | " + clientId : "");
+            String ioThreadName = NETWORK_THREAD_PREFIX + (clientId.length() > 0 ? " | " + clientId : "");
             this.ioThread = new KafkaThread(ioThreadName, this.sender, true);
             this.ioThread.start();
             this.errors = this.metrics.sensor("errors");
@@ -630,6 +631,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                         " specified in value.serializer");
             }
             int partition = partition(record, serializedKey, serializedValue, cluster);
+            tp = new TopicPartition(record.topic(), partition);
 
             setReadOnly(record.headers());
             Header[] headers = record.headers().toArray();
@@ -637,7 +639,6 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             int serializedSize = AbstractRecords.sizeInBytesUpperBound(apiVersions.maxUsableProduceMagic(),
                     serializedKey, serializedValue, headers);
             ensureValidRecordSize(serializedSize);
-            tp = new TopicPartition(record.topic(), partition);
             long timestamp = record.timestamp() == null ? time.milliseconds() : record.timestamp();
             log.trace("Sending record {} with callback {} to topic {} partition {}", record, callback, record.topic(), partition);
             // producer callback will make sure to call both 'callback' and interceptor callback
