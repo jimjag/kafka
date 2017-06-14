@@ -238,6 +238,7 @@ public class StreamThread extends Thread {
     }
 
     abstract class AbstractTaskCreator {
+        final static long MAX_BACKOFF_TIME_MS = 1000L;
         void retryWithBackoff(final Map<TaskId, Set<TopicPartition>> tasksToBeCreated, final long start) {
             long backoffTimeMs = 50L;
             final Set<TaskId> retryingTasks = new HashSet<>();
@@ -259,7 +260,7 @@ public class StreamThread extends Thread {
                     } catch (final LockException e) {
                         // ignore and retry
                         if (!retryingTasks.contains(taskId)) {
-                            log.warn("{} Could not create task {}. Will retry. {}", logPrefix, taskId, e);
+                            log.warn("{} Could not create task {} due to {}. Will retry.", logPrefix, taskId, e.getMessage());
                             retryingTasks.add(taskId);
                         }
                     }
@@ -272,6 +273,7 @@ public class StreamThread extends Thread {
                 try {
                     Thread.sleep(backoffTimeMs);
                     backoffTimeMs <<= 1;
+                    backoffTimeMs = Math.min(backoffTimeMs, MAX_BACKOFF_TIME_MS);
                 } catch (final InterruptedException e) {
                     // ignore
                 }
@@ -1427,7 +1429,10 @@ public class StreamThread extends Thread {
         try {
             task.close(false);
         } catch (final Exception f) {
-            log.warn("{} Failed to close zombie task: ", logPrefix, f);
+            if (!log.isDebugEnabled() && !log.isTraceEnabled()) {
+                log.warn("{} Failed to close zombie task: {}", logPrefix, f.getMessage());
+            }
+            log.debug("{} Failed to close zombie task: ", logPrefix, f);
         }
         activeTasks.remove(task.id);
     }
