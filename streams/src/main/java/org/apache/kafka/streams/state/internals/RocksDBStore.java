@@ -54,6 +54,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
+import java.util.Objects;
 
 /**
  * A persistent key-value store based on RocksDB.
@@ -95,7 +96,6 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
     private Options options;
     private WriteOptions wOptions;
     private FlushOptions fOptions;
-    private boolean eosEnabled;
 
     protected volatile boolean open = false;
 
@@ -179,7 +179,7 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
                 putInternal(key, value);
             }
         });
-        eosEnabled = checkForEos(context.appConfigs());
+
         open = true;
     }
 
@@ -242,6 +242,7 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
     @SuppressWarnings("unchecked")
     @Override
     public synchronized void put(K key, V value) {
+        Objects.requireNonNull(key, "key cannot be null");
         validateStoreOpen();
         byte[] rawKey = serdes.rawKey(key);
         byte[] rawValue = serdes.rawValue(value);
@@ -250,6 +251,7 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
 
     @Override
     public synchronized V putIfAbsent(K key, V value) {
+        Objects.requireNonNull(key, "key cannot be null");
         V originalValue = get(key);
         if (originalValue == null) {
             put(key, value);
@@ -279,6 +281,7 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
     public void putAll(List<KeyValue<K, V>> entries) {
         try (WriteBatch batch = new WriteBatch()) {
             for (KeyValue<K, V> entry : entries) {
+                Objects.requireNonNull(entry.key, "key cannot be null");
                 final byte[] rawKey = serdes.rawKey(entry.key);
                 if (entry.value == null) {
                     db.delete(rawKey);
@@ -296,6 +299,7 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
 
     @Override
     public synchronized V delete(K key) {
+        Objects.requireNonNull(key, "key cannot be null");
         V value = get(key);
         put(key, null);
         return value;
@@ -303,6 +307,8 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
 
     @Override
     public synchronized KeyValueIterator<K, V> range(K from, K to) {
+        Objects.requireNonNull(from, "from cannot be null");
+        Objects.requireNonNull(to, "to cannot be null");
         validateStoreOpen();
 
         // query rocksdb
@@ -356,12 +362,12 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
 
     @Override
     public synchronized void flush() {
-        if (db == null || eosEnabled) {
+        if (db == null) {
             return;
         }
+        // flush RocksDB
         flushInternal();
     }
-
     /**
      * @throws ProcessorStateException if flushing failed because of any internal store exceptions
      */
@@ -371,10 +377,6 @@ public class RocksDBStore<K, V> implements KeyValueStore<K, V> {
         } catch (RocksDBException e) {
             throw new ProcessorStateException("Error while executing flush from store " + this.name, e);
         }
-    }
-
-    private boolean checkForEos(Map<String, Object> configs) {
-        return StreamsConfig.EXACTLY_ONCE.equals(configs.get(StreamsConfig.PROCESSING_GUARANTEE_CONFIG));
     }
 
     @Override
