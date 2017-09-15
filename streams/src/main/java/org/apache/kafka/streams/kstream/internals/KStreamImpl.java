@@ -378,10 +378,11 @@ public class KStreamImpl<K, V> extends AbstractStream<K> implements KStream<K, V
 
     @Override
     public KStream<K, V> through(final String topic, final Produced<K, V> produced) {
-        to(topic, produced);
+        final ProducedInternal<K, V> producedInternal = new ProducedInternal<>(produced);
+        to(topic, producedInternal);
         return builder.stream(Collections.singleton(topic),
-                              new ConsumedInternal<>(produced.keySerde(),
-                                            produced.valueSerde(),
+                              new ConsumedInternal<>(producedInternal.keySerde(),
+                                            producedInternal.valueSerde(),
                                             new FailOnInvalidTimestamp(),
                                             null));
     }
@@ -455,6 +456,11 @@ public class KStreamImpl<K, V> extends AbstractStream<K> implements KStream<K, V
     public void to(final String topic, final Produced<K, V> produced) {
         Objects.requireNonNull(topic, "topic can't be null");
         Objects.requireNonNull(produced, "Produced can't be null");
+        to(topic, new ProducedInternal<>(produced));
+
+    }
+
+    private void to(final String topic, final ProducedInternal<K, V> produced) {
         final String name = builder.newName(SINK_NAME);
         final Serializer<K> keySerializer = produced.keySerde() == null ? null : produced.keySerde().serializer();
         final Serializer<V> valSerializer = produced.valueSerde() == null ? null : produced.valueSerde().serializer();
@@ -779,12 +785,13 @@ public class KStreamImpl<K, V> extends AbstractStream<K> implements KStream<K, V
                                               final Serialized<KR, V> serialized) {
         Objects.requireNonNull(selector, "selector can't be null");
         Objects.requireNonNull(serialized, "serialized can't be null");
+        final SerializedInternal<KR, V> serializedInternal = new SerializedInternal<>(serialized);
         String selectName = internalSelectKey(selector);
         return new KGroupedStreamImpl<>(builder,
                                         selectName,
                                         sourceNodes,
-                                        serialized.keySerde(),
-                                        serialized.valueSerde(),
+                                        serializedInternal.keySerde(),
+                                        serializedInternal.valueSerde(),
                                         true);
     }
 
@@ -803,11 +810,12 @@ public class KStreamImpl<K, V> extends AbstractStream<K> implements KStream<K, V
 
     @Override
     public KGroupedStream<K, V> groupByKey(final Serialized<K, V> serialized) {
+        final SerializedInternal<K, V> serializedInternal = new SerializedInternal<>(serialized);
         return new KGroupedStreamImpl<>(builder,
                                         this.name,
                                         sourceNodes,
-                                        serialized.keySerde(),
-                                        serialized.valueSerde(),
+                                        serializedInternal.keySerde(),
+                                        serializedInternal.valueSerde(),
                                         this.repartitionRequired);
 
     }
