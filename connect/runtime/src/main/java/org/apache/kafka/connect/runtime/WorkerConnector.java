@@ -18,7 +18,6 @@ package org.apache.kafka.connect.runtime;
 
 import org.apache.kafka.connect.connector.Connector;
 import org.apache.kafka.connect.connector.ConnectorContext;
-import org.apache.kafka.connect.runtime.AbstractStatus.State;
 import org.apache.kafka.connect.runtime.ConnectMetrics.IndicatorPredicate;
 import org.apache.kafka.connect.runtime.ConnectMetrics.MetricGroup;
 import org.apache.kafka.connect.sink.SinkConnector;
@@ -171,6 +170,8 @@ public class WorkerConnector {
             log.error("{} Error while shutting down connector", this, t);
             this.state = State.FAILED;
             statusListener.onFailure(connName, t);
+        } finally {
+            metrics.close();
         }
     }
 
@@ -244,6 +245,10 @@ public class WorkerConnector {
             });
         }
 
+        public void close() {
+            metricGroup.close();
+        }
+
         @Override
         public void onStartup(String connector) {
             state = AbstractStatus.State.RUNNING;
@@ -294,6 +299,10 @@ public class WorkerConnector {
 
         boolean isFailed() {
             return state == AbstractStatus.State.FAILED;
+        }
+
+        protected MetricGroup metricGroup() {
+            return metricGroup;
         }
     }
 }

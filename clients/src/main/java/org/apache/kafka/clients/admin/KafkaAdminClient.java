@@ -377,7 +377,7 @@ public class KafkaAdminClient extends AdminClient {
             new TimeoutProcessorFactory() : timeoutProcessorFactory;
         this.maxRetries = config.getInt(AdminClientConfig.RETRIES_CONFIG);
         config.logUnused();
-        AppInfoParser.registerAppInfo(JMX_PREFIX, sanitizedClientId);
+        AppInfoParser.registerAppInfo(JMX_PREFIX, sanitizedClientId, metrics);
         log.debug("Kafka admin client initialized");
         thread.start();
     }
@@ -418,7 +418,7 @@ public class KafkaAdminClient extends AdminClient {
             // Wait for the thread to be joined.
             thread.join();
 
-            AppInfoParser.unregisterAppInfo(JMX_PREFIX, Sanitizer.sanitize(clientId));
+            AppInfoParser.unregisterAppInfo(JMX_PREFIX, Sanitizer.sanitize(clientId), metrics);
 
             log.debug("Kafka admin client closed.");
         } catch (InterruptedException e) {
@@ -1694,7 +1694,7 @@ public class KafkaAdminClient extends AdminClient {
                         TopicPartitionReplica replica = new TopicPartitionReplica(tp.topic(), tp.partition(), brokerId);
                         KafkaFutureImpl<Void> future = futures.get(replica);
                         if (future == null) {
-                            handleFailure(new IllegalArgumentException(
+                            handleFailure(new IllegalStateException(
                                 "The partition " + tp + " in the response from broker " + brokerId + " is not in the request"));
                         } else if (error == Errors.NONE) {
                             future.complete(null);
@@ -1796,8 +1796,8 @@ public class KafkaAdminClient extends AdminClient {
                         // No replica info will be provided if the log directory is offline
                         if (logDirInfo.error == Errors.KAFKA_STORAGE_ERROR)
                             continue;
-                        else if (logDirInfo.error != Errors.NONE)
-                            handleFailure(new IllegalArgumentException(
+                        if (logDirInfo.error != Errors.NONE)
+                            handleFailure(new IllegalStateException(
                                 "The error " + logDirInfo.error + " for log directory " + logDir + " in the response from broker " + brokerId + " is illegal"));
 
                         for (Map.Entry<TopicPartition, DescribeLogDirsResponse.ReplicaInfo> replicaInfoEntry: logDirInfo.replicaInfos.entrySet()) {
@@ -1805,7 +1805,7 @@ public class KafkaAdminClient extends AdminClient {
                             DescribeLogDirsResponse.ReplicaInfo replicaInfo = replicaInfoEntry.getValue();
                             ReplicaLogDirInfo replicaLogDirInfo = replicaDirInfoByPartition.get(tp);
                             if (replicaLogDirInfo == null) {
-                                handleFailure(new IllegalArgumentException(
+                                handleFailure(new IllegalStateException(
                                     "The partition " + tp + " in the response from broker " + brokerId + " is not in the request"));
                             } else if (replicaInfo.isFuture) {
                                 replicaDirInfoByPartition.put(tp, new ReplicaLogDirInfo(replicaLogDirInfo.getCurrentReplicaLogDir(),

@@ -17,7 +17,6 @@
 package org.apache.kafka.common.requests;
 
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.types.ArrayOf;
@@ -34,6 +33,7 @@ import org.apache.kafka.common.utils.Utils;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -116,37 +116,53 @@ public class ProduceRequest extends AbstractRequest {
     }
 
     public static class Builder extends AbstractRequest.Builder<ProduceRequest> {
-        private final byte magic;
         private final short acks;
         private final int timeout;
         private final Map<TopicPartition, MemoryRecords> partitionRecords;
         private final String transactionalId;
 
-        public Builder(byte magic,
-                       short acks,
-                       int timeout,
-                       Map<TopicPartition, MemoryRecords> partitionRecords,
-                       String transactionalId) {
-            super(ApiKeys.PRODUCE, (short) (magic == RecordBatch.MAGIC_VALUE_V2 ? ApiKeys.PRODUCE.latestVersion() : 2));
-            this.magic = magic;
+        public static Builder forCurrentMagic(short acks,
+                                              int timeout,
+                                              Map<TopicPartition, MemoryRecords> partitionRecords) {
+            return forMagic(RecordBatch.CURRENT_MAGIC_VALUE, acks, timeout, partitionRecords, null);
+        }
+
+        public static Builder forMagic(byte magic,
+                                       short acks,
+                                       int timeout,
+                                       Map<TopicPartition, MemoryRecords> partitionRecords,
+                                       String transactionalId) {
+            // Message format upgrades correspond with a bump in the produce request version. Older
+            // message format versions are generally not supported by the produce request versions
+            // following the bump.
+
+            final short minVersion;
+            final short maxVersion;
+            if (magic < RecordBatch.MAGIC_VALUE_V2) {
+                minVersion = 2;
+                maxVersion = 2;
+            } else {
+                minVersion = 3;
+                maxVersion = ApiKeys.PRODUCE.latestVersion();
+            }
+            return new Builder(minVersion, maxVersion, acks, timeout, partitionRecords, transactionalId);
+        }
+
+        private Builder(short minVersion,
+                        short maxVersion,
+                        short acks,
+                        int timeout,
+                        Map<TopicPartition, MemoryRecords> partitionRecords,
+                        String transactionalId) {
+            super(ApiKeys.PRODUCE, minVersion, maxVersion);
             this.acks = acks;
             this.timeout = timeout;
             this.partitionRecords = partitionRecords;
             this.transactionalId = transactionalId;
         }
 
-        public Builder(byte magic,
-                       short acks,
-                       int timeout,
-                       Map<TopicPartition, MemoryRecords> partitionRecords) {
-            this(magic, acks, timeout, partitionRecords, null);
-        }
-
         @Override
         public ProduceRequest build(short version) {
-            if (version < 2)
-                throw new UnsupportedVersionException("ProduceRequest versions older than 2 are not supported.");
-
             return new ProduceRequest(version, acks, timeout, partitionRecords, transactionalId);
         }
 
@@ -154,7 +170,6 @@ public class ProduceRequest extends AbstractRequest {
         public String toString() {
             StringBuilder bld = new StringBuilder();
             bld.append("(type=ProduceRequest")
-                    .append(", magic=").append(magic)
                     .append(", acks=").append(acks)
                     .append(", timeout=").append(timeout)
                     .append(", partitionRecords=(").append(partitionRecords)
@@ -318,6 +333,12 @@ public class ProduceRequest extends AbstractRequest {
                 throw new IllegalArgumentException(String.format("Version %d is not valid. Valid versions for %s are 0 to %d",
                         versionId, this.getClass().getSimpleName(), ApiKeys.PRODUCE.latestVersion()));
         }
+    }
+
+    @Override
+    public Map<Errors, Integer> errorCounts(Throwable e) {
+        Errors error = Errors.forException(e);
+        return Collections.singletonMap(error, partitions().size());
     }
 
     private Collection<TopicPartition> partitions() {

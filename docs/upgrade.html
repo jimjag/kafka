@@ -33,7 +33,7 @@
         </ul>
     </li>
     <li> Upgrade the brokers one at a time: shut down the broker, update the code, and restart it. </li>
-    <li> Once the entire cluster is upgraded, bump the protocol version by editing <code>inter.broker.protocol.version</code> and setting it to 1.0.0.
+    <li> Once the entire cluster is upgraded, bump the protocol version by editing <code>inter.broker.protocol.version</code> and setting it to 1.0.
     <li> Restart the brokers one by one for the new protocol version to take effect. </li>
 </ol>
 
@@ -52,7 +52,7 @@
         to retain the previous behavior should set the broker config <code>delete.topic.enable</code> to <code>false</code>. Keep in mind that topic deletion removes data and the operation is not reversible (i.e. there is no "undelete" operation)</li>
     <li>For topics that support timestamp search if no offset can be found for a partition, that partition is now included in the search result with a null offset value. Previously, the partition was not included in the map.
         This change was made to make the search behavior consistent with the case of topics not supporting timestamp search.
-    <li>If the <code>inter.broker.protocol.version</code> is 0.11.1 or later, a broker will now stay online to serve replicas
+    <li>If the <code>inter.broker.protocol.version</code> is 1.0 or later, a broker will now stay online to serve replicas
         on live log directories even if there are offline log directories. A log directory may become offline due to IOException
         caused by hardware failure. Users need to monitor the per-broker metric <code>offlineLogDirectoryCount</code> to check
         whether there is offline log directory. </li>
@@ -67,6 +67,13 @@
         A stub implementation has been retained for binary compatibility.</li>
     <li>The Java clients and tools now accept any string as a client-id.</li>
     <li>The deprecated tool <code>kafka-consumer-offset-checker.sh</code> has been removed. Use <code>kafka-consumer-groups.sh</code> to get consumer group details.</li>
+    <li>SimpleAclAuthorizer now logs access denials to the authorizer log by default.</li>
+    <li>The <code>app-info</code> mbean registered with JMX to provide version and commit id will be deprecated and replaced with
+        metrics providing these attributes.</li>
+    <li>Kafka metrics may now contain non-numeric values. <code>org.apache.kafka.common.Metric#value()</code> has been deprecated and
+        may throw an <code>IllegalStateException</code> when iterating over metrics of <code>KafkaProducer/KafkaConsumer/KafkaAdminClient</code>.
+        <code>org.apache.kafka.common.Metric#metricValue()</code> can be used to safely iterate over any metric value.</code>
+
 </ul>
 
 <h5><a id="upgrade_100_new_protocols" href="#upgrade_100_new_protocols">New Protocol Versions</a></h5>
