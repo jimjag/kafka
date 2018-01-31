@@ -218,6 +218,31 @@ public class AbstractConfig {
         return result;
     }
 
+    /**
+     * If at least one key with {@code prefix} exists, all prefixed values will be parsed and put into map.
+     * If no value with {@code prefix} exists all unprefixed values will be returned.
+     *
+     * This is useful if one wants to allow prefixed configs to override default ones, but wants to use either
+     * only prefixed configs or only regular configs, but not mix them.
+     */
+    public Map<String, Object> valuesWithPrefixAllOrNothing(String prefix) {
+        Map<String, Object> withPrefix = originalsWithPrefix(prefix, true);
+
+        if (withPrefix.isEmpty()) {
+            return new RecordingMap<>(values(), "", true);
+        } else {
+            Map<String, Object> result = new RecordingMap<>(prefix, true);
+
+            for (Map.Entry<String, ?> entry : withPrefix.entrySet()) {
+                ConfigDef.ConfigKey configKey = definition.configKeys().get(entry.getKey());
+                if (configKey != null)
+                    result.put(entry.getKey(), definition.parseValue(configKey, entry.getValue(), true));
+            }
+
+            return result;
+        }
+    }
+
     public Map<String, ?> values() {
         return new RecordingMap<>(values);
     }
@@ -288,11 +313,26 @@ public class AbstractConfig {
      * @return The list of configured instances
      */
     public <T> List<T> getConfiguredInstances(String key, Class<T> t, Map<String, Object> configOverrides) {
-        List<String> klasses = getList(key);
-        List<T> objects = new ArrayList<>();
+        return getConfiguredInstances(getList(key), t, configOverrides);
+    }
+
+
+    /**
+     * Get a list of configured instances of the given class specified by the given configuration key. The configuration
+     * may specify either null or an empty string to indicate no configured instances. In both cases, this method
+     * returns an empty list to indicate no configured instances.
+     * @param classNames The list of class names of the instances to create
+     * @param t The interface the class should implement
+     * @param configOverrides Configuration overrides to use.
+     * @return The list of configured instances
+     */
+    public <T> List<T> getConfiguredInstances(List<String> classNames, Class<T> t, Map<String, Object> configOverrides) {
+        List<T> objects = new ArrayList<T>();
+        if (classNames == null)
+            return objects;
         Map<String, Object> configPairs = originals();
         configPairs.putAll(configOverrides);
-        for (Object klass : klasses) {
+        for (Object klass : classNames) {
             Object o;
             if (klass instanceof String) {
                 try {
