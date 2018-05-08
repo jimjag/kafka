@@ -876,10 +876,6 @@ public class KafkaStreams {
                         thread.setStateListener(null);
                         thread.shutdown();
                     }
-                    if (globalStreamThread != null) {
-                        globalStreamThread.setStateListener(null);
-                        globalStreamThread.shutdown();
-                    }
 
                     for (final StreamThread thread : threads) {
                         try {
@@ -890,6 +886,12 @@ public class KafkaStreams {
                             Thread.currentThread().interrupt();
                         }
                     }
+
+                    if (globalStreamThread != null) {
+                        globalStreamThread.setStateListener(null);
+                        globalStreamThread.shutdown();
+                    }
+
                     if (globalStreamThread != null && !globalStreamThread.stillRunning()) {
                         try {
                             globalStreamThread.join();
@@ -917,46 +919,6 @@ public class KafkaStreams {
             log.info("Streams client cannot stop completely within the timeout");
             return false;
         }
-    }
-
-    /**
-     * Produce a string representation containing useful information about this {@code KafkaStream} instance such as
-     * thread IDs, task IDs, and a representation of the topology DAG including {@link StateStore}s (cf.
-     * {@link Topology} and {@link StreamsBuilder}).
-     *
-     * @return A string representation of the Kafka Streams instance.
-     *
-     * @deprecated Use {@link #localThreadsMetadata()} to retrieve runtime information.
-     */
-    @Override
-    @Deprecated
-    public String toString() {
-        return toString("");
-    }
-
-    /**
-     * Produce a string representation containing useful information about this {@code KafkaStream} instance such as
-     * thread IDs, task IDs, and a representation of the topology DAG including {@link StateStore}s (cf.
-     * {@link Topology} and {@link StreamsBuilder}).
-     *
-     * @param indent the top-level indent for each line
-     * @return A string representation of the Kafka Streams instance.
-     *
-     * @deprecated Use {@link #localThreadsMetadata()} to retrieve runtime information.
-     */
-    @Deprecated
-    public String toString(final String indent) {
-        final StringBuilder sb = new StringBuilder()
-            .append(indent)
-            .append("KafkaStreams processID: ")
-            .append(processId)
-            .append("\n");
-        for (final StreamThread thread : threads) {
-            sb.append(thread.toString(indent + "\t"));
-        }
-        sb.append("\n");
-
-        return sb.toString();
     }
 
     /**
