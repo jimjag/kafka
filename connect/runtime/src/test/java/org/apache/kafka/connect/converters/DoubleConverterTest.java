@@ -14,25 +14,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.connect.storage;
+package org.apache.kafka.connect.converters;
 
-import org.apache.kafka.common.config.ConfigDef;
+import org.apache.kafka.common.serialization.DoubleSerializer;
+import org.apache.kafka.common.serialization.Serializer;
+import org.apache.kafka.connect.data.Schema;
 
-import java.util.Map;
+public class DoubleConverterTest extends NumberConverterTest<Double> {
 
-/**
- * Configuration options for instances of {@link LongConverter}, {@link IntegerConverter}, {@link ShortConverter}, {@link DoubleConverter},
- * and {@link FloatConverter} instances.
- */
-public class NumberConverterConfig extends ConverterConfig {
-
-    private final static ConfigDef CONFIG = ConverterConfig.newConfigDef();
-
-    public static ConfigDef configDef() {
-        return CONFIG;
+    public Double[] samples() {
+        return new Double[]{Double.MIN_VALUE, 1234.31, Double.MAX_VALUE};
     }
 
-    public NumberConverterConfig(Map<String, ?> props) {
-        super(CONFIG, props);
+    @Override
+    protected Schema schema() {
+        return Schema.OPTIONAL_FLOAT64_SCHEMA;
+    }
+
+    @Override
+    protected NumberConverter<Double> createConverter() {
+        return new DoubleConverter();
+    }
+
+    @Override
+    protected Serializer<Double> createSerializer() {
+        return new DoubleSerializer();
     }
 }

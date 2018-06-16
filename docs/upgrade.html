@@ -64,7 +64,7 @@
     <li>ACLs should not be added to prefixed resources,
         (added in <a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-290%3A+Support+for+Prefixed+ACLs">KIP-290</a>),
         until all brokers in the cluster have been updated.
-        <p><b>NOTE:</b> any prefixed ACLs added to a cluster will be ignored should the cluster be downgraded again.
+        <p><b>NOTE:</b> any prefixed ACLs added to a cluster, even after the cluster is fully upgraded, will be ignored should the cluster be downgraded again.
     </li>
 </ol>
 
@@ -80,6 +80,7 @@
         JMX monitoring tools that do not automatically aggregate. To get the total count for a specific request type, the tool needs to be
         updated to aggregate across different versions.
     </li>
+    <li><a href="https://cwiki.apache.org/confluence/x/uaBzB">KIP-225</a> changed the metric "records.lag" to use tags for topic and partition. The original version with the name format "{topic}-{partition}.records-lag" has been removed.</li>
     <li>The Scala producers, which have been deprecated since 0.10.0.0, have been removed. The Java producer has been the recommended option
         since 0.9.0.0. Note that the behaviour of the default partitioner in the Java producer differs from the default partitioner
         in the Scala producers. Users migrating should consider configuring a custom partitioner that retains the previous behaviour.</li>
@@ -97,10 +98,18 @@
         <code>internal.value.converter=org.apache.kafka.connect.json.JsonConverter</code>
         <code>internal.value.converter.schemas.enable=false</code>
     </li>
-    <li><a href="https://cwiki.apache.org/confluence/x/5kiHB">KIP-266</a> adds overloads to the consumer to support
-        timeout behavior for blocking APIs. In particular, a new <code>poll(Duration)</code> API has been added which
-        does not block for dynamic partition assignment. The old <code>poll(long)</code> API has been deprecated and
-        will be removed in a future version.</li>
+    <li><a href="https://cwiki.apache.org/confluence/x/5kiHB">KIP-266</a> adds a new consumer configuration <code>default.api.timeout.ms</code>
+        to specify the default timeout to use for <code>KafkaConsumer</code> APIs that could block. The KIP also adds overloads for such blocking
+        APIs to support specifying a specific timeout to use for each of them instead of using the default timeout set by <code>default.api.timeout.ms</code>.
+        In particular, a new <code>poll(Duration)</code> API has been added which does not block for dynamic partition assignment.
+        The old <code>poll(long)</code> API has been deprecated and will be removed in a future version. Overloads have also been added
+        for other <code>KafkaConsumer</code> methods like <code>partitionsFor</code>, <code>listTopics</code>, <code>offsetsForTimes</code>,
+        <code>beginningOffsets</code>, <code>endOffsets</code> and <code>close</code> that take in a <code>Duration</code>.</li>
+    <li>Also as part of KIP-266, the default value of <code>request.timeout.ms</code> has been changed to 30 seconds.
+        The previous value was a little higher than 5 minutes to account for maximum time that a rebalance would take.
+        Now we treat the JoinGroup request in the rebalance as a special case and use a value derived from 
+        <code>max.poll.interval.ms</code> for the request timeout. All other request types use the timeout defined
+        by <code>request.timeout.ms</code></li> 
     <li>The internal method <code>kafka.admin.AdminClient.deleteRecordsBefore</code> has been removed. Users are encouraged to migrate to <code>org.apache.kafka.clients.admin.AdminClient.deleteRecords</code>.</li>
     <li>The tool kafka.tools.ReplayLogProducer has been removed.</li>
     <li>The AclCommand tool <code>--producer</code> convenience option uses the <a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-277+-+Fine+Grained+ACL+for+CreateTopics+API">KIP-277</a> finer grained ACL on the given topic. </li>
@@ -110,6 +119,14 @@
     </li>
     <li><a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-290%3A+Support+for+Prefixed+ACLs">KIP-290</a> adds the ability
         to define ACLs on prefixed resources, e.g. any topic starting with 'foo'.</li>
+    <li><a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-283%3A+Efficient+Memory+Usage+for+Down-Conversion">KIP-283</a> improves message down-conversion
+        handling on Kafka broker, which has typically been a memory-intensive operation. The KIP adds a mechanism by which the operation becomes less memory intensive
+        by down-converting chunks of partition data at a time which helps put an upper bound on memory consumption. With this improvement, there is a change in
+        <code>FetchResponse</code> protocol behavior where the broker could send an oversized message batch towards the end of the response with an invalid offset.
+        Such oversized messages must be ignored by consumer clients, as is done by <code>KafkaConsumer</code>.
+    <p>KIP-283 also adds new topic and broker configurations <code>message.downconversion.enable</code> and <code>log.message.downconversion.enable</code> respectively
+       to control whether down-conversion is enabled. When disabled, broker does not perform any down-conversion and instead sends an <code>UNSUPPORTED_VERSION</code>
+       error to the client.</p></li>
 </ul>
 
 <h5><a id="upgrade_200_new_protocols" href="#upgrade_200_new_protocols">New Protocol Versions</a></h5>

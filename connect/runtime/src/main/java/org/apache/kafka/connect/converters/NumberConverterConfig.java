@@ -14,29 +14,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.kafka.connect.converters;
 
-package org.apache.kafka.common.requests;
+import org.apache.kafka.common.config.ConfigDef;
+import org.apache.kafka.connect.storage.ConverterConfig;
 
-public enum ResourceType {
-    UNKNOWN((byte) 0), ANY((byte) 1), TOPIC((byte) 2), GROUP((byte) 3), BROKER((byte) 4);
+import java.util.Map;
 
-    private static final ResourceType[] VALUES = values();
+/**
+ * Configuration options for instances of {@link LongConverter}, {@link IntegerConverter}, {@link ShortConverter}, {@link DoubleConverter},
+ * and {@link FloatConverter} instances.
+ */
+public class NumberConverterConfig extends ConverterConfig {
 
-    private final byte id;
+    private final static ConfigDef CONFIG = ConverterConfig.newConfigDef();
 
-    ResourceType(byte id) {
-        this.id = id;
+    public static ConfigDef configDef() {
+        return CONFIG;
     }
 
-    public byte id() {
-        return id;
-    }
-
-    public static ResourceType forId(byte id) {
-        if (id < 0)
-            throw new IllegalArgumentException("id should be positive, id: " + id);
-        if (id >= VALUES.length)
-            return UNKNOWN;
-        return VALUES[id];
+    public NumberConverterConfig(Map<String, ?> props) {
+        super(CONFIG, props);
     }
 }

@@ -14,22 +14,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.connect.storage;
+package org.apache.kafka.connect.converters;
 
-import org.apache.kafka.common.serialization.IntegerDeserializer;
-import org.apache.kafka.common.serialization.IntegerSerializer;
+import org.apache.kafka.common.serialization.FloatSerializer;
+import org.apache.kafka.common.serialization.Serializer;
 import org.apache.kafka.connect.data.Schema;
 
-/**
- * {@link Converter} and {@link HeaderConverter} implementation that only supports serializing to and deserializing from integer values.
- * It does support handling nulls. When converting from bytes to Kafka Connect format, the converter will always return an
- * optional INT32 schema.
- * <p>
- * This implementation currently does nothing with the topic names or header names.
- */
-public class IntegerConverter extends NumberConverter<Integer> {
+public class FloatConverterTest extends NumberConverterTest<Float> {
 
-    public IntegerConverter() {
-        super("integer", Schema.OPTIONAL_INT32_SCHEMA, new IntegerSerializer(), new IntegerDeserializer());
+    public Float[] samples() {
+        return new Float[]{Float.MIN_VALUE, 1234.31f, Float.MAX_VALUE};
+    }
+
+    @Override
+    protected Schema schema() {
+        return Schema.OPTIONAL_FLOAT32_SCHEMA;
+    }
+
+    @Override
+    protected NumberConverter<Float> createConverter() {
+        return new FloatConverter();
+    }
+
+    @Override
+    protected Serializer<Float> createSerializer() {
+        return new FloatSerializer();
     }
 }

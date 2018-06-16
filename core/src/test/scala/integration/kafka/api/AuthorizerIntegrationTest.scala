@@ -32,6 +32,7 @@ import org.apache.kafka.clients.consumer._
 import org.apache.kafka.clients.consumer.internals.NoOpConsumerRebalanceListener
 import org.apache.kafka.clients.producer._
 import org.apache.kafka.common.acl.{AccessControlEntry, AccessControlEntryFilter, AclBinding, AclBindingFilter, AclOperation, AclPermissionType}
+import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.errors._
 import org.apache.kafka.common.internals.Topic.GROUP_METADATA_TOPIC_NAME
 import org.apache.kafka.common.network.ListenerName
@@ -39,11 +40,13 @@ import org.apache.kafka.common.protocol.{ApiKeys, Errors}
 import org.apache.kafka.common.record.{CompressionType, MemoryRecords, Records, SimpleRecord}
 import org.apache.kafka.common.requests.CreateAclsRequest.AclCreation
 import org.apache.kafka.common.requests.CreateTopicsRequest.TopicDetails
-import org.apache.kafka.common.requests.{Resource => RResource, ResourceType => RResourceType, _}
-import org.apache.kafka.common.resource.ResourceNameType.LITERAL
+import org.apache.kafka.common.requests._
+import org.apache.kafka.common.resource.PatternType.LITERAL
 import org.apache.kafka.common.resource.{ResourcePattern, ResourcePatternFilter, ResourceType => AdminResourceType}
 import org.apache.kafka.common.security.auth.{KafkaPrincipal, SecurityProtocol}
 import org.apache.kafka.common.{KafkaException, Node, TopicPartition, requests}
+import org.apache.kafka.test.{TestUtils => JTestUtils}
+
 import org.junit.Assert._
 import org.junit.{After, Assert, Before, Test}
 
@@ -175,9 +178,9 @@ class AuthorizerIntegrationTest extends BaseRequestTest {
     ApiKeys.DELETE_RECORDS -> ((resp: requests.DeleteRecordsResponse) => resp.responses.get(deleteRecordsPartition).error),
     ApiKeys.OFFSET_FOR_LEADER_EPOCH -> ((resp: OffsetsForLeaderEpochResponse) => resp.responses.get(tp).error),
     ApiKeys.DESCRIBE_CONFIGS -> ((resp: DescribeConfigsResponse) =>
-      resp.configs.get(new RResource(RResourceType.TOPIC, tp.topic)).error.error),
+      resp.configs.get(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic)).error.error),
     ApiKeys.ALTER_CONFIGS -> ((resp: AlterConfigsResponse) =>
-      resp.errors.get(new RResource(RResourceType.TOPIC, tp.topic)).error),
+      resp.errors.get(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic)).error),
     ApiKeys.INIT_PRODUCER_ID -> ((resp: InitProducerIdResponse) => resp.error),
     ApiKeys.WRITE_TXN_MARKERS -> ((resp: WriteTxnMarkersResponse) => resp.errors(producerId).get(tp)),
     ApiKeys.ADD_PARTITIONS_TO_TXN -> ((resp: AddPartitionsToTxnResponse) => resp.errors.get(tp)),
@@ -366,11 +369,11 @@ class AuthorizerIntegrationTest extends BaseRequestTest {
   private def deleteRecordsRequest = new DeleteRecordsRequest.Builder(5000, Collections.singletonMap(deleteRecordsPartition, 0L)).build()
 
   private def describeConfigsRequest =
-    new DescribeConfigsRequest.Builder(Collections.singleton(new RResource(RResourceType.TOPIC, tp.topic))).build()
+    new DescribeConfigsRequest.Builder(Collections.singleton(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic))).build()
 
   private def alterConfigsRequest =
     new AlterConfigsRequest.Builder(
-      Collections.singletonMap(new RResource(RResourceType.TOPIC, tp.topic),
+      Collections.singletonMap(new ConfigResource(ConfigResource.Type.TOPIC, tp.topic),
         new AlterConfigsRequest.Config(Collections.singleton(
           new AlterConfigsRequest.ConfigEntry(LogConfig.MaxMessageBytesProp, "1000000")
         ))), true).build()
@@ -859,6 +862,31 @@ class AuthorizerIntegrationTest extends BaseRequestTest {
       this.consumers.head.poll(Duration.ofMillis(50L))
       this.zkClient.topicExists(newTopic)
     }, "Expected topic was not created")
+  }
+
+  @Test
+  def testCreatePermissionMetadataRequestAutoCreate() {
+    val readAcls = topicReadAcl.get(topicResource).get
+    addAndVerifyAcls(readAcls, topicResource)
+    assertTrue(zkClient.topicExists(topicResource.name))
+
+    addAndVerifyAcls(readAcls, createTopicResource)
+    assertFalse(zkClient.topicExists(createTopic))
+
+    val metadataRequest = new MetadataRequest.Builder(List(topic, createTopic).asJava, true).build()
+    val metadataResponse = MetadataResponse.parse(connectAndSend(metadataRequest, ApiKeys.METADATA), ApiKeys.METADATA.latestVersion)
+
+    assertEquals(Set(topic).asJava, metadataResponse.topicsByError(Errors.NONE));
+    assertEquals(Set(createTopic).asJava, metadataResponse.topicsByError(Errors.TOPIC_AUTHORIZATION_FAILED))
+
+    val createAcls = topicCreateAcl.get(createTopicResource).get
+    addAndVerifyAcls(createAcls, createTopicResource)
+
+    // retry as topic being created can have MetadataResponse with Errors.LEADER_NOT_AVAILABLE
+    TestUtils.retry(JTestUtils.DEFAULT_MAX_WAIT_MS)(() => {
+      val metadataResponse = MetadataResponse.parse(connectAndSend(metadataRequest, ApiKeys.METADATA), ApiKeys.METADATA.latestVersion)
+      assertEquals(Set(topic, createTopic).asJava, metadataResponse.topicsByError(Errors.NONE))
+    })
   }
 
   @Test(expected = classOf[AuthorizationException])
