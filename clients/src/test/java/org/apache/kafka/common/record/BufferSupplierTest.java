@@ -15,31 +15,32 @@
  * limitations under the License.
  */
 
-package org.apache.kafka.common.config;
+package org.apache.kafka.common.record;
 
 import org.junit.Test;
 
-import java.util.Arrays;
+import java.nio.ByteBuffer;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
 
-public class ConfigResourceTest {
-    @Test
-    public void shouldGetTypeFromId() {
-        assertEquals(ConfigResource.Type.TOPIC, ConfigResource.Type.forId((byte) 2));
-        assertEquals(ConfigResource.Type.BROKER, ConfigResource.Type.forId((byte) 4));
-    }
+public class BufferSupplierTest {
 
     @Test
-    public void shouldReturnUnknownForUnknownCode() {
-        assertEquals(ConfigResource.Type.UNKNOWN, ConfigResource.Type.forId((byte) -1));
-        assertEquals(ConfigResource.Type.UNKNOWN, ConfigResource.Type.forId((byte) 0));
-        assertEquals(ConfigResource.Type.UNKNOWN, ConfigResource.Type.forId((byte) 1));
+    public void testGrowableBuffer() {
+        BufferSupplier.GrowableBufferSupplier supplier = new BufferSupplier.GrowableBufferSupplier();
+        ByteBuffer buffer = supplier.get(1024);
+        assertEquals(0, buffer.position());
+        assertEquals(1024, buffer.capacity());
+        supplier.release(buffer);
+
+        ByteBuffer cached = supplier.get(512);
+        assertEquals(0, cached.position());
+        assertSame(buffer, cached);
+
+        ByteBuffer increased = supplier.get(2048);
+        assertEquals(2048, increased.capacity());
+        assertEquals(0, increased.position());
     }
 
-    @Test
-    public void shouldRoundTripEveryType() {
-        Arrays.stream(ConfigResource.Type.values()).forEach(type ->
-            assertEquals(type.toString(), type, ConfigResource.Type.forId(type.id())));
-    }
 }

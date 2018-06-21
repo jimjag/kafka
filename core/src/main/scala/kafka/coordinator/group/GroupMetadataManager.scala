@@ -26,14 +26,14 @@ import java.util.concurrent.locks.ReentrantLock
 
 import com.yammer.metrics.core.Gauge
 import kafka.api.{ApiVersion, KAFKA_0_10_1_IV0}
-import kafka.common.{KafkaException, MessageFormatter, OffsetAndMetadata}
+import kafka.common.{MessageFormatter, OffsetAndMetadata}
 import kafka.metrics.KafkaMetricsGroup
 import kafka.server.ReplicaManager
 import kafka.utils.CoreUtils.inLock
 import kafka.utils._
 import kafka.zk.KafkaZkClient
 import org.apache.kafka.clients.consumer.ConsumerRecord
-import org.apache.kafka.common.TopicPartition
+import org.apache.kafka.common.{KafkaException, TopicPartition}
 import org.apache.kafka.common.internals.Topic
 import org.apache.kafka.common.protocol.Errors
 import org.apache.kafka.common.protocol.types.Type._
@@ -532,8 +532,8 @@ class GroupMetadataManager(brokerId: Int,
             case records: MemoryRecords => records
             case fileRecords: FileRecords =>
               buffer.clear()
-              val bufferRead = fileRecords.readInto(buffer, 0)
-              MemoryRecords.readableRecords(bufferRead)
+              fileRecords.readInto(buffer, 0)
+              MemoryRecords.readableRecords(buffer)
           }
 
           memRecords.batches.asScala.foreach { batch =>
