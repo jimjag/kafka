@@ -29,12 +29,13 @@ import kafka.log.LogConfig
 import kafka.server.{Defaults, KafkaConfig, KafkaServer}
 import org.apache.kafka.clients.admin._
 import kafka.utils.{Logging, TestUtils}
+import kafka.utils.TestUtils._
 import kafka.utils.Implicits._
 import org.apache.kafka.clients.admin.NewTopic
 import org.apache.kafka.clients.consumer.{ConsumerConfig, KafkaConsumer}
 import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.clients.producer.ProducerRecord
-import org.apache.kafka.common.{ConsumerGroupState, KafkaFuture, TopicPartition, TopicPartitionReplica}
+import org.apache.kafka.common.{ConsumerGroupState, TopicPartition, TopicPartitionReplica}
 import org.apache.kafka.common.acl._
 import org.apache.kafka.common.config.ConfigResource
 import org.apache.kafka.common.errors._
@@ -123,18 +124,6 @@ class AdminClientIntegrationTest extends IntegrationTestHarness with Logging {
         expectedPresent.forall(topicName => topics.contains(topicName)) &&
           expectedMissing.forall(topicName => !topics.contains(topicName))
       }, "timed out waiting for topics")
-  }
-
-  def assertFutureExceptionTypeEquals(future: KafkaFuture[_], clazz: Class[_ <: Throwable]): Unit = {
-    try {
-      future.get()
-      fail("Expected CompletableFuture.get to return an exception")
-    } catch {
-      case e: ExecutionException =>
-        val cause = e.getCause()
-        assertTrue("Expected an exception of type " + clazz.getName + "; got type " +
-            cause.getClass().getName, clazz.isInstance(cause))
-    }
   }
 
   @Test
@@ -1089,7 +1078,7 @@ class AdminClientIntegrationTest extends IntegrationTestHarness with Logging {
     val config = createConfig()
     config.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "100000000")
     val factory = new KafkaAdminClientTest.FailureInjectingTimeoutProcessorFactory()
-    val client = KafkaAdminClientTest.createInternal(new AdminClientConfig(config), factory)
+    client = KafkaAdminClientTest.createInternal(new AdminClientConfig(config), factory)
     val future = client.createTopics(Seq("mytopic", "mytopic2").map(new NewTopic(_, 1, 1)).asJava,
         new CreateTopicsOptions().validateOnly(true)).all()
     assertFutureExceptionTypeEquals(future, classOf[TimeoutException])
@@ -1105,7 +1094,7 @@ class AdminClientIntegrationTest extends IntegrationTestHarness with Logging {
   @Test
   def testConsumerGroups(): Unit = {
     val config = createConfig()
-    val client = AdminClient.create(config)
+    client = AdminClient.create(config)
     try {
       // Verify that initially there are no consumer groups to list.
       val list1 = client.listConsumerGroups()

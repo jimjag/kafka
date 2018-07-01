@@ -19,7 +19,6 @@ import java.util.regex.Pattern
 import java.util.{ArrayList, Collections, Properties}
 import java.time.Duration
 
-import kafka.admin.AdminClient
 import kafka.admin.ConsumerGroupCommand.{ConsumerGroupCommandOptions, ConsumerGroupService}
 import kafka.common.TopicAndPartition
 import kafka.log.LogConfig
@@ -27,7 +26,7 @@ import kafka.network.SocketServer
 import kafka.security.auth._
 import kafka.server.{BaseRequestTest, KafkaConfig}
 import kafka.utils.TestUtils
-import org.apache.kafka.clients.admin.NewPartitions
+import org.apache.kafka.clients.admin.{AdminClient, AdminClientConfig, NewPartitions}
 import org.apache.kafka.clients.consumer._
 import org.apache.kafka.clients.consumer.internals.NoOpConsumerRebalanceListener
 import org.apache.kafka.clients.producer._
@@ -46,7 +45,6 @@ import org.apache.kafka.common.resource.{ResourcePattern, ResourcePatternFilter,
 import org.apache.kafka.common.security.auth.{KafkaPrincipal, SecurityProtocol}
 import org.apache.kafka.common.{KafkaException, Node, TopicPartition, requests}
 import org.apache.kafka.test.{TestUtils => JTestUtils}
-
 import org.junit.Assert._
 import org.junit.{After, Assert, Before, Test}
 
@@ -107,6 +105,8 @@ class AuthorizerIntegrationTest extends BaseRequestTest {
   val consumerCount = 2
   val producerConfig = new Properties
   val numRecords = 1
+
+  val adminClients = Buffer[AdminClient]()
 
   override def propertyOverrides(properties: Properties): Unit = {
     properties.put(KafkaConfig.AuthorizerClassNameProp, classOf[SimpleAclAuthorizer].getName)
@@ -261,6 +261,7 @@ class AuthorizerIntegrationTest extends BaseRequestTest {
     producers.foreach(_.close())
     consumers.foreach(_.wakeup())
     consumers.foreach(_.close())
+    adminClients.foreach(_.close())
     removeAllAcls()
     super.tearDown()
   }
@@ -1002,17 +1003,18 @@ class AuthorizerIntegrationTest extends BaseRequestTest {
     this.consumers.head.partitionsFor(topic)
   }
 
-  @Test(expected = classOf[GroupAuthorizationException])
+  @Test
   def testDescribeGroupApiWithNoGroupAcl() {
     addAndVerifyAcls(Set(new Acl(userPrincipal, Allow, Acl.WildCardHost, Describe)), topicResource)
-    AdminClient.createSimplePlaintext(brokerList).describeConsumerGroup(group)
+    val result = createAdminClient().describeConsumerGroups(Seq(group).asJava)
+    TestUtils.assertFutureExceptionTypeEquals(result.describedGroups().get(group), classOf[GroupAuthorizationException])
   }
 
   @Test
   def testDescribeGroupApiWithGroupDescribe() {
     addAndVerifyAcls(Set(new Acl(userPrincipal, Allow, Acl.WildCardHost, Describe)), groupResource)
     addAndVerifyAcls(Set(new Acl(userPrincipal, Allow, Acl.WildCardHost, Describe)), topicResource)
-    AdminClient.createSimplePlaintext(brokerList).describeConsumerGroup(group)
+    createAdminClient().describeConsumerGroups(Seq(group).asJava).describedGroups().get(group).get()
   }
 
   @Test
@@ -1034,8 +1036,7 @@ class AuthorizerIntegrationTest extends BaseRequestTest {
     addAndVerifyAcls(Set(new Acl(userPrincipal, Allow, Acl.WildCardHost, Delete)), groupResource)
     this.consumers.head.assign(List(tp).asJava)
     this.consumers.head.commitSync(Map(tp -> new OffsetAndMetadata(5, "")).asJava)
-    val result = AdminClient.createSimplePlaintext(brokerList).deleteConsumerGroups(List(group))
-    assert(result.size == 1 && result.keySet.contains(group) && result.get(group).contains(Errors.NONE))
+    createAdminClient().deleteConsumerGroups(Seq(group).asJava).deletedGroups().get(group).get()
   }
 
   @Test
@@ -1044,14 +1045,14 @@ class AuthorizerIntegrationTest extends BaseRequestTest {
     addAndVerifyAcls(Set(new Acl(userPrincipal, Allow, Acl.WildCardHost, Read)), topicResource)
     this.consumers.head.assign(List(tp).asJava)
     this.consumers.head.commitSync(Map(tp -> new OffsetAndMetadata(5, "")).asJava)
-    val result = AdminClient.createSimplePlaintext(brokerList).deleteConsumerGroups(List(group))
-    assert(result.size == 1 && result.keySet.contains(group) && result.get(group).contains(Errors.GROUP_AUTHORIZATION_FAILED))
+    val result = createAdminClient().deleteConsumerGroups(Seq(group).asJava)
+    TestUtils.assertFutureExceptionTypeEquals(result.deletedGroups().get(group), classOf[GroupAuthorizationException])
   }
 
   @Test
   def testDeleteGroupApiWithNoDeleteGroupAcl2() {
-    val result = AdminClient.createSimplePlaintext(brokerList).deleteConsumerGroups(List(group))
-    assert(result.size == 1 && result.keySet.contains(group) && result.get(group).contains(Errors.GROUP_AUTHORIZATION_FAILED))
+    val result = createAdminClient().deleteConsumerGroups(Seq(group).asJava)
+    TestUtils.assertFutureExceptionTypeEquals(result.deletedGroups().get(group), classOf[GroupAuthorizationException])
   }
 
   @Test
@@ -1457,6 +1458,14 @@ class AuthorizerIntegrationTest extends BaseRequestTest {
       props = Some(idempotentProperties))
     producers += producer
     producer
+  }
+
+  private def createAdminClient(): AdminClient = {
+    val props = new Properties()
+    props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, brokerList)
+    val adminClient = AdminClient.create(props)
+    adminClients += adminClient
+    adminClient
   }
 
 }
