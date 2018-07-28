@@ -269,10 +269,10 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
             this.joinedSubscription = newJoinedSubscription;
         }
 
-        // update the metadata and enforce a refresh to make sure the fetcher can start
-        // fetching data in the next iteration
+        // Update the metadata to include the full group subscription. The leader will trigger a rebalance
+        // if there are any metadata changes affecting any of the consumed partitions (whether or not this
+        // instance is subscribed to the topics).
         this.metadata.setTopics(subscriptions.groupSubscription());
-        if (!client.ensureFreshMetadata(Long.MAX_VALUE)) throw new TimeoutException();
 
         // give the assignor a chance to update internal state based on the received assignment
         assignor.onAssignment(assignment);
@@ -328,6 +328,16 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
                 // we need to ensure that the metadata is fresh before joining initially. This ensures
                 // that we have matched the pattern against the cluster's topics at least once before joining.
                 if (subscriptions.hasPatternSubscription()) {
+                    // For consumer group that uses pattern-based subscription, after a topic is created,
+                    // any consumer that discovers the topic after metadata refresh can trigger rebalance
+                    // across the entire consumer group. Multiple rebalances can be triggered after one topic
+                    // creation if consumers refresh metadata at vastly different times. We can significantly
+                    // reduce the number of rebalances caused by single topic creation by asking consumer to
+                    // refresh metadata before re-joining the group as long as the refresh backoff time has
+                    // passed.
+                    if (this.metadata.timeToAllowUpdate(currentTime) == 0) {
+                        this.metadata.requestUpdate();
+                    }
                     if (!client.ensureFreshMetadata(remainingTimeAtLeastZero(timeoutMs, elapsed))) {
                         return false;
                     }
