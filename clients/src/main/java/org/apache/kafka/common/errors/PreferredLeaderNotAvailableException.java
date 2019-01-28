@@ -14,31 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.streams.state.internals;
+package org.apache.kafka.common.errors;
 
-import org.apache.kafka.streams.processor.internals.InternalProcessorContext;
+public class PreferredLeaderNotAvailableException extends InvalidMetadataException {
 
-import java.util.List;
+    public PreferredLeaderNotAvailableException(String message) {
+        super(message);
+    }
 
-interface Segments<S extends Segment> {
-
-    long segmentId(final long timestamp);
-
-    String segmentName(final long segmentId);
-
-    S getSegmentForTimestamp(final long timestamp);
-
-    S getOrCreateSegmentIfLive(final long segmentId, final InternalProcessorContext context);
-
-    S getOrCreateSegment(final long segmentId, final InternalProcessorContext context);
-
-    void openExisting(final InternalProcessorContext context);
-
-    List<S> segments(final long timeFrom, final long timeTo);
-
-    List<S> allSegments();
-
-    void flush();
-
-    void close();
+    public PreferredLeaderNotAvailableException(String message, Throwable cause) {
+        super(message, cause);
+    }
 }

@@ -14,31 +14,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.streams.state.internals;
 
-import org.apache.kafka.streams.processor.internals.InternalProcessorContext;
+package org.apache.kafka.clients.admin;
 
-import java.util.List;
+import org.apache.kafka.common.annotation.InterfaceStability;
 
-interface Segments<S extends Segment> {
+import java.util.Collection;
 
-    long segmentId(final long timestamp);
-
-    String segmentName(final long segmentId);
-
-    S getSegmentForTimestamp(final long timestamp);
-
-    S getOrCreateSegmentIfLive(final long segmentId, final InternalProcessorContext context);
-
-    S getOrCreateSegment(final long segmentId, final InternalProcessorContext context);
-
-    void openExisting(final InternalProcessorContext context);
-
-    List<S> segments(final long timeFrom, final long timeTo);
-
-    List<S> allSegments();
-
-    void flush();
-
-    void close();
+/**
+ * Options for {@link AdminClient#electPreferredLeaders(Collection, ElectPreferredLeadersOptions)}.
+ *
+ * The API of this class is evolving, see {@link AdminClient} for details.
+ */
+@InterfaceStability.Evolving
+public class ElectPreferredLeadersOptions extends AbstractOptions<ElectPreferredLeadersOptions> {
 }
