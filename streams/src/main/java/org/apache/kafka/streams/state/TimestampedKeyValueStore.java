@@ -14,28 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-package org.apache.kafka.clients.admin;
-
-import org.apache.kafka.common.annotation.InterfaceStability;
-
-import java.util.Collection;
+package org.apache.kafka.streams.state;
 
 /**
- * Options for {@link AdminClient#describeConsumerGroups(Collection, DescribeConsumerGroupsOptions)}.
- * <p>
- * The API of this class is evolving, see {@link AdminClient} for details.
+ * A key-(value/timestamp) store that supports put/get/delete and range queries.
+ *
+ * @param <K> The key type
+ * @param <V> The value type
  */
-@InterfaceStability.Evolving
-public class DescribeConsumerGroupsOptions extends AbstractOptions<DescribeConsumerGroupsOptions> {
-    private boolean includeAuthorizedOperations;
-
-    public DescribeConsumerGroupsOptions includeAuthorizedOperations(boolean includeAuthorizedOperations) {
-        this.includeAuthorizedOperations = includeAuthorizedOperations;
-        return this;
-    }
-
-    public boolean includeAuthorizedOperations() {
-        return includeAuthorizedOperations;
-    }
-}
+public interface TimestampedKeyValueStore<K, V> extends KeyValueStore<K, ValueAndTimestamp<V>> { }
