@@ -64,6 +64,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -389,8 +390,8 @@ public final class ConsumerCoordinator extends AbstractCoordinator {
         Set<String> allSubscribedTopics = new HashSet<>();
         Map<String, Subscription> subscriptions = new HashMap<>();
         for (JoinGroupResponseData.JoinGroupResponseMember memberSubscription : allSubscriptions) {
-            Subscription subscription = ConsumerProtocol.deserializeSubscription(ByteBuffer.wrap(memberSubscription.metadata()),
-                                                                                 Optional.ofNullable(memberSubscription.groupInstanceId()));
+            Subscription subscription = ConsumerProtocol.buildSubscription(ByteBuffer.wrap(memberSubscription.metadata()),
+                                                                           Optional.ofNullable(memberSubscription.groupInstanceId()));
             subscriptions.put(memberSubscription.memberId(), subscription);
             allSubscribedTopics.addAll(subscription.topics());
         }
