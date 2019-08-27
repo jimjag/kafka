@@ -14,32 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.streams.state.internals;
+package org.apache.kafka.common.config;
 
-import org.rocksdb.Options;
+/**
+ * Contains the common security config for SSL and SASL
+ */
+public class SecurityConfig {
 
-public class RocksDBTimestampedSegmentedBytesStoreTest
-    extends AbstractRocksDBSegmentedBytesStoreTest<TimestampedSegment> {
+    public static final String SECURITY_PROVIDERS_CONFIG = "security.providers";
+    public static final String SECURITY_PROVIDERS_DOC = "A list of configurable creators each returning a provider " +
+            "implementing security algorithms";
 
-    private final static String METRICS_SCOPE = "metrics-scope";
-
-    RocksDBTimestampedSegmentedBytesStore getBytesStore() {
-        return new RocksDBTimestampedSegmentedBytesStore(
-            storeName,
-            METRICS_SCOPE,
-            retention,
-            segmentInterval,
-            schema
-        );
-    }
-
-    @Override
-    TimestampedSegments newSegments() {
-        return new TimestampedSegments(storeName, METRICS_SCOPE, retention, segmentInterval);
-    }
-
-    @Override
-    Options getOptions(final TimestampedSegment segment) {
-        return segment.getOptions();
-    }
 }

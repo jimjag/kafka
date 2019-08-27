@@ -14,32 +14,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.streams.state.internals;
+package org.apache.kafka.common.security;
 
-import org.rocksdb.Options;
+import org.apache.kafka.common.Configurable;
 
-public class RocksDBTimestampedSegmentedBytesStoreTest
-    extends AbstractRocksDBSegmentedBytesStoreTest<TimestampedSegment> {
+import java.security.Provider;
+import java.util.Map;
 
-    private final static String METRICS_SCOPE = "metrics-scope";
+/**
+ * An interface for generating security providers.
+ */
+public interface SecurityProviderCreator extends Configurable {
 
-    RocksDBTimestampedSegmentedBytesStore getBytesStore() {
-        return new RocksDBTimestampedSegmentedBytesStore(
-            storeName,
-            METRICS_SCOPE,
-            retention,
-            segmentInterval,
-            schema
-        );
+    /**
+     * Configure method is used to configure the generator to create the Security Provider
+     * @param config configuration parameters for initialising security provider
+     */
+    default void configure(Map<String, ?> config) {
+
     }
 
-    @Override
-    TimestampedSegments newSegments() {
-        return new TimestampedSegments(storeName, METRICS_SCOPE, retention, segmentInterval);
-    }
-
-    @Override
-    Options getOptions(final TimestampedSegment segment) {
-        return segment.getOptions();
-    }
+    /**
+     * Generate the security provider configured
+     */
+    Provider getProvider();
 }

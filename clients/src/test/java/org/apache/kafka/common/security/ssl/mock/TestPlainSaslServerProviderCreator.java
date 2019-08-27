@@ -14,32 +14,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.streams.state.internals;
+package org.apache.kafka.common.security.ssl.mock;
 
-import org.rocksdb.Options;
+import org.apache.kafka.common.security.SecurityProviderCreator;
 
-public class RocksDBTimestampedSegmentedBytesStoreTest
-    extends AbstractRocksDBSegmentedBytesStoreTest<TimestampedSegment> {
+import java.security.Provider;
 
-    private final static String METRICS_SCOPE = "metrics-scope";
+public class TestPlainSaslServerProviderCreator implements SecurityProviderCreator {
 
-    RocksDBTimestampedSegmentedBytesStore getBytesStore() {
-        return new RocksDBTimestampedSegmentedBytesStore(
-            storeName,
-            METRICS_SCOPE,
-            retention,
-            segmentInterval,
-            schema
-        );
-    }
+    private TestPlainSaslServerProvider provider;
 
     @Override
-    TimestampedSegments newSegments() {
-        return new TimestampedSegments(storeName, METRICS_SCOPE, retention, segmentInterval);
-    }
-
-    @Override
-    Options getOptions(final TimestampedSegment segment) {
-        return segment.getOptions();
+    public Provider getProvider() {
+        if (provider == null) {
+            provider = new TestPlainSaslServerProvider();
+        }
+        return provider;
     }
 }
