@@ -1600,7 +1600,7 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleApiVersionsRequest(request: RequestChannel.Request): Unit = {
     // Note that broker returns its full list of supported ApiKeys and versions regardless of current
     // authentication state (e.g., before SASL authentication on an SASL listener, do note that no
-    // Kafka protocol requests may take place on a SSL listener before the SSL handshake is finished).
+    // Kafka protocol requests may take place on an SSL listener before the SSL handshake is finished).
     // If this is considered to leak information about the broker version a workaround is to use SSL
     // with client authentication which is performed at an earlier stage of the connection where the
     // ApiVersionRequest is not available.
@@ -2197,10 +2197,7 @@ class KafkaApis(val requestChannel: RequestChannel,
 
         val aclCreationResults = aclBindings.map { acl =>
           val result = errorResults.getOrElse(acl, createResults.get(validBindings.indexOf(acl)))
-          if (result.failed)
-            new AclCreationResponse(ApiError.fromThrowable(result.exception))
-          else
-            new AclCreationResponse(ApiError.NONE)
+          new AclCreationResponse(result.exception.asScala.map(ApiError.fromThrowable).getOrElse(ApiError.NONE))
         }
 
         sendResponseMaybeThrottle(request, requestThrottleMs =>
@@ -2219,8 +2216,8 @@ class KafkaApis(val requestChannel: RequestChannel,
       case Some(auth) =>
 
         val results = auth.deleteAcls(request.context, deleteAclsRequest.filters)
-        def toErrorCode(exception: ApiException): ApiError = {
-          if (exception != null) ApiError.fromThrowable(exception) else ApiError.NONE
+        def toErrorCode(exception: Optional[ApiException]): ApiError = {
+          exception.asScala.map(ApiError.fromThrowable).getOrElse(ApiError.NONE)
         }
         val filterResponses = results.asScala.map { result =>
           val deletions = result.aclBindingDeleteResults().asScala.toList.map { deletionResult =>
