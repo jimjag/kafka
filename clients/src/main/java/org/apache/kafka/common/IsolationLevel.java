@@ -14,21 +14,29 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.common.security.ssl.mock;
+package org.apache.kafka.common;
 
-import org.apache.kafka.common.security.auth.SecurityProviderCreator;
+public enum IsolationLevel {
+    READ_UNCOMMITTED((byte) 0), READ_COMMITTED((byte) 1);
 
-import java.security.Provider;
+    private final byte id;
 
-public class TestPlainSaslServerProviderCreator implements SecurityProviderCreator {
+    IsolationLevel(byte id) {
+        this.id = id;
+    }
 
-    private TestPlainSaslServerProvider provider;
+    public byte id() {
+        return id;
+    }
 
-    @Override
-    public Provider getProvider() {
-        if (provider == null) {
-            provider = new TestPlainSaslServerProvider();
+    public static IsolationLevel forId(byte id) {
+        switch (id) {
+            case 0:
+                return READ_UNCOMMITTED;
+            case 1:
+                return READ_COMMITTED;
+            default:
+                throw new IllegalArgumentException("Unknown isolation level " + id);
         }
-        return provider;
     }
 }

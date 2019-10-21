@@ -14,21 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.common.security.ssl.mock;
+package org.apache.kafka.clients.admin;
 
-import org.apache.kafka.common.security.auth.SecurityProviderCreator;
+import org.apache.kafka.common.annotation.InterfaceStability;
 
-import java.security.Provider;
-
-public class TestPlainSaslServerProviderCreator implements SecurityProviderCreator {
-
-    private TestPlainSaslServerProvider provider;
-
-    @Override
-    public Provider getProvider() {
-        if (provider == null) {
-            provider = new TestPlainSaslServerProvider();
-        }
-        return provider;
-    }
+/**
+ * Options for the {@link AdminClient#alterConsumerGroupOffsets(String, Map)} call.
+ *
+ * The API of this class is evolving, see {@link AdminClient} for details.
+ */
+@InterfaceStability.Evolving
+public class AlterConsumerGroupOffsetsOptions extends AbstractOptions<AlterConsumerGroupOffsetsOptions> {
 }

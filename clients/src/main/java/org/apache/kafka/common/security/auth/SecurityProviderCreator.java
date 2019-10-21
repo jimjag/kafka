@@ -14,21 +14,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.common.security.ssl.mock;
+package org.apache.kafka.common.security.auth;
 
-import org.apache.kafka.common.security.auth.SecurityProviderCreator;
+import org.apache.kafka.common.Configurable;
+import org.apache.kafka.common.annotation.InterfaceStability;
 
 import java.security.Provider;
+import java.util.Map;
 
-public class TestPlainSaslServerProviderCreator implements SecurityProviderCreator {
+/**
+ * An interface for generating security providers.
+ */
+@InterfaceStability.Evolving
+public interface SecurityProviderCreator extends Configurable {
 
-    private TestPlainSaslServerProvider provider;
+    /**
+     * Configure method is used to configure the generator to create the Security Provider
+     * @param config configuration parameters for initialising security provider
+     */
+    default void configure(Map<String, ?> config) {
 
-    @Override
-    public Provider getProvider() {
-        if (provider == null) {
-            provider = new TestPlainSaslServerProvider();
-        }
-        return provider;
     }
+
+    /**
+     * Generate the security provider configured
+     */
+    Provider getProvider();
 }

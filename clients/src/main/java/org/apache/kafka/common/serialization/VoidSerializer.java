@@ -14,21 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.common.security.ssl.mock;
+package org.apache.kafka.common.serialization;
 
-import org.apache.kafka.common.security.auth.SecurityProviderCreator;
-
-import java.security.Provider;
-
-public class TestPlainSaslServerProviderCreator implements SecurityProviderCreator {
-
-    private TestPlainSaslServerProvider provider;
-
+public class VoidSerializer implements Serializer<Void> {
     @Override
-    public Provider getProvider() {
-        if (provider == null) {
-            provider = new TestPlainSaslServerProvider();
-        }
-        return provider;
+    public byte[] serialize(String topic, Void data) {
+        return null;
     }
 }
