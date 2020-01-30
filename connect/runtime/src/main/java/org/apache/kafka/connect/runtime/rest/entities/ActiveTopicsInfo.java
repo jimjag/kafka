@@ -14,24 +14,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.kafka.connect.runtime.rest.entities;
 
-package org.apache.kafka.common.protocol;
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
-import java.nio.ByteBuffer;
-import java.util.UUID;
+import java.util.Collection;
 
-public interface Writable {
-    void writeByte(byte val);
-    void writeShort(short val);
-    void writeInt(int val);
-    void writeLong(long val);
-    void writeDouble(double val);
-    void writeByteArray(byte[] arr);
-    void writeUnsignedVarint(int i);
-    void writeByteBuffer(ByteBuffer buf);
+public class ActiveTopicsInfo {
+    private final String connector;
+    private final Collection<String> topics;
 
-    default void writeUUID(UUID uuid) {
-        writeLong(uuid.getMostSignificantBits());
-        writeLong(uuid.getLeastSignificantBits());
+    @JsonCreator
+    public ActiveTopicsInfo(String connector, @JsonProperty("topics") Collection<String> topics) {
+        this.connector = connector;
+        this.topics = topics;
     }
+
+    public String connector() {
+        return connector;
+    }
+
+    @JsonProperty
+    public Collection<String> topics() {
+        return topics;
+    }
+
 }

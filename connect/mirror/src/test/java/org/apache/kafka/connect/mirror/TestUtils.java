@@ -14,24 +14,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.kafka.connect.mirror;
 
-package org.apache.kafka.common.protocol;
+import java.util.HashMap;
+import java.util.Map;
 
-import java.nio.ByteBuffer;
-import java.util.UUID;
+public class TestUtils {
 
-public interface Writable {
-    void writeByte(byte val);
-    void writeShort(short val);
-    void writeInt(int val);
-    void writeLong(long val);
-    void writeDouble(double val);
-    void writeByteArray(byte[] arr);
-    void writeUnsignedVarint(int i);
-    void writeByteBuffer(ByteBuffer buf);
-
-    default void writeUUID(UUID uuid) {
-        writeLong(uuid.getMostSignificantBits());
-        writeLong(uuid.getLeastSignificantBits());
+    static Map<String, String> makeProps(String... keyValues) {
+        Map<String, String> props = new HashMap<>();
+        props.put("name", "ConnectorName");
+        props.put("connector.class", "ConnectorClass");
+        props.put("source.cluster.alias", "source1");
+        props.put("target.cluster.alias", "target2");
+        for (int i = 0; i < keyValues.length; i += 2) {
+            props.put(keyValues[i], keyValues[i + 1]);
+        }
+        return props;
     }
 }
