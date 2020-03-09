@@ -1017,6 +1017,7 @@ public class StreamTaskTest {
 
     @Test
     public void shouldWrapKafkaExceptionWithStreamsExceptionWhenProcess() {
+        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.emptySet()).anyTimes();
         EasyMock.replay(stateManager);
 
         task = createFaultyStatefulTask(createConfig(false, "100"));
@@ -1045,6 +1046,7 @@ public class StreamTaskTest {
         EasyMock.expect(recordCollector.offsets()).andReturn(Collections.singletonMap(changelogPartition, 10L));
         recordCollector.commit(EasyMock.eq(Collections.emptyMap()));
         EasyMock.expectLastCall();
+        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.emptySet()).anyTimes();
         stateManager.checkpoint(EasyMock.eq(Collections.singletonMap(changelogPartition, 10L)));
         EasyMock.expectLastCall();
         EasyMock.replay(recordCollector, stateDirectory, stateManager);
@@ -1067,6 +1069,7 @@ public class StreamTaskTest {
     public void shouldReadCommittedOffsetAndRethrowTimeoutWhenCompleteRestoration() throws IOException {
         stateDirectory = EasyMock.createNiceMock(StateDirectory.class);
         EasyMock.expect(stateDirectory.lock(taskId)).andReturn(true);
+        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.emptySet()).anyTimes();
 
         EasyMock.replay(recordCollector, stateDirectory, stateManager);
 
@@ -1084,6 +1087,7 @@ public class StreamTaskTest {
         EasyMock.expect(recordCollector.offsets()).andThrow(new AssertionError("Should not try to read offsets")).anyTimes();
         recordCollector.commit(EasyMock.anyObject());
         EasyMock.expectLastCall().andThrow(new AssertionError("Should not try to commit")).anyTimes();
+        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.emptySet()).anyTimes();
         stateManager.checkpoint(EasyMock.eq(Collections.emptyMap()));
         EasyMock.expectLastCall();
 
@@ -1297,7 +1301,7 @@ public class StreamTaskTest {
     @Test
     public void shouldReturnStateManagerChangelogOffsets() {
         EasyMock.expect(stateManager.changelogOffsets()).andReturn(Collections.singletonMap(partition1, 50L)).anyTimes();
-        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.singleton(partition1));
+        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.singleton(partition1)).anyTimes();
         EasyMock.replay(stateManager);
 
         task = createOptimizedStatefulTask(createConfig(false, "100"), consumer);
@@ -1312,13 +1316,11 @@ public class StreamTaskTest {
     }
 
     @Test
-    public void shouldDoNothingWithCreatedStateOnClose() {
-        stateManager.close();
-        EasyMock.expectLastCall().andThrow(new AssertionError("Close should not be called")).anyTimes();
+    public void shouldCheckpointWithCreatedStateOnClose() {
         stateManager.flush();
         EasyMock.expectLastCall().andThrow(new AssertionError("Flush should not be called")).anyTimes();
-        stateManager.checkpoint(EasyMock.anyObject());
-        EasyMock.expectLastCall().andThrow(new AssertionError("Checkpoint should not be called")).anyTimes();
+        stateManager.checkpoint(EasyMock.eq(Collections.emptyMap()));
+        EasyMock.expectLastCall();
         EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.singleton(partition1));
         EasyMock.replay(stateManager);
 
@@ -1338,6 +1340,7 @@ public class StreamTaskTest {
 
     @Test
     public void shouldNotCommitAndThrowOnCloseDirty() {
+        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.emptySet()).anyTimes();
         stateManager.close();
         EasyMock.expectLastCall().andThrow(new ProcessorStateException("KABOOM!")).anyTimes();
         // should still flush on close dirty
@@ -1374,6 +1377,7 @@ public class StreamTaskTest {
         EasyMock.expectLastCall();
         recordCollector.commit(EasyMock.anyObject());
         EasyMock.expectLastCall().andThrow(new AssertionError("Should not call this function")).anyTimes();
+        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.emptySet()).anyTimes();
         EasyMock.replay(stateManager);
 
         task = createOptimizedStatefulTask(createConfig(false, "100"), consumer);
@@ -1394,6 +1398,7 @@ public class StreamTaskTest {
         EasyMock.expectLastCall();
         recordCollector.commit(EasyMock.anyObject());
         EasyMock.expectLastCall().andThrow(new AssertionError("Should not call this function")).anyTimes();
+        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.emptySet()).anyTimes();
         EasyMock.replay(stateManager);
 
         task = createOptimizedStatefulTask(createConfig(false, "100"), consumer);
@@ -1419,6 +1424,7 @@ public class StreamTaskTest {
         EasyMock.expectLastCall();
         stateManager.checkpoint(EasyMock.eq(Collections.singletonMap(changelogPartition, offset)));
         EasyMock.expectLastCall();
+        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.emptySet()).anyTimes();
         EasyMock.replay(recordCollector, stateManager);
         final MetricName metricName = setupCloseTaskMetric();
 
@@ -1444,6 +1450,7 @@ public class StreamTaskTest {
         EasyMock.expectLastCall();
         stateManager.checkpoint(EasyMock.eq(Collections.singletonMap(changelogPartition, offset)));
         EasyMock.expectLastCall();
+        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.singleton(changelogPartition)).anyTimes();
         stateManager.close();
         EasyMock.expectLastCall().andThrow(new ProcessorStateException("KABOOM!")).anyTimes();
         EasyMock.replay(recordCollector, stateManager);
@@ -1462,6 +1469,7 @@ public class StreamTaskTest {
 
         verify(stateManager);
         EasyMock.reset(stateManager);
+        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.singleton(changelogPartition)).anyTimes();
         EasyMock.replay(stateManager);
     }
 
@@ -1478,6 +1486,7 @@ public class StreamTaskTest {
         EasyMock.expectLastCall().andThrow(new AssertionError("Checkpoint should not be called")).anyTimes();
         stateManager.close();
         EasyMock.expectLastCall().andThrow(new AssertionError("Close should not be called!")).anyTimes();
+        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.emptySet()).anyTimes();
         EasyMock.replay(recordCollector, stateManager);
         final MetricName metricName = setupCloseTaskMetric();
 
@@ -1493,6 +1502,7 @@ public class StreamTaskTest {
 
         verify(stateManager);
         EasyMock.reset(stateManager);
+        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.emptySet()).anyTimes();
         EasyMock.replay(stateManager);
     }
 
@@ -1509,6 +1519,8 @@ public class StreamTaskTest {
         EasyMock.expectLastCall().andThrow(new ProcessorStateException("KABOOM!")).anyTimes();
         stateManager.close();
         EasyMock.expectLastCall().andThrow(new AssertionError("Close should not be called!")).anyTimes();
+        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.emptySet()).anyTimes();
+
         EasyMock.replay(recordCollector, stateManager);
         final MetricName metricName = setupCloseTaskMetric();
 
@@ -1524,11 +1536,15 @@ public class StreamTaskTest {
 
         verify(stateManager);
         EasyMock.reset(stateManager);
+        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.emptySet()).anyTimes();
         EasyMock.replay(stateManager);
     }
 
     @Test
     public void shouldThrowIfClosingOnIllegalState() {
+        EasyMock.expect(stateManager.changelogPartitions()).andReturn(Collections.emptySet()).anyTimes();
+        EasyMock.replay(stateManager);
+
         task = createOptimizedStatefulTask(createConfig(false, "100"), consumer);
 
         task.closeClean();
