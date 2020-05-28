@@ -12,7 +12,7 @@
     <suppress checks="CyclomaticComplexity|BooleanExpressionComplexity"
               files="(SchemaGenerator|MessageDataGenerator|FieldSpec).java"/>
     <suppress checks="NPathComplexity"
-              files="(MessageDataGenerator|FieldSpec).java"/>
+              files="(MessageDataGenerator|FieldSpec|WorkerSinkTask).java"/>
     <suppress checks="JavaNCSS"
               files="(ApiMessageType).java|MessageDataGenerator.java"/>
     <suppress checks="MethodLength"
@@ -100,10 +100,10 @@
     <!-- Connect -->
     <suppress checks="ClassFanOutComplexity"
               files="(DistributedHerder|Worker).java"/>
-
+    <suppress checks="ClassFanOutComplexity"
+              files="Worker(|Test).java"/>
     <suppress checks="MethodLength"
               files="(KafkaConfigBackingStore|Values).java"/>
-
     <suppress checks="ParameterNumber"
               files="Worker(SinkTask|SourceTask|Coordinator).java"/>
     <suppress checks="ParameterNumber"
@@ -170,6 +170,8 @@
               files="StreamsPartitionAssignor.java"/>
     <suppress checks="JavaNCSS"
               files="EosBetaUpgradeIntegrationTest.java"/>
+    <suppress checks="StaticVariableName"
+              files="StreamsMetricsImpl.java"/>
 
     <suppress checks="NPathComplexity"
               files="(AssignorConfiguration|EosBetaUpgradeIntegrationTest|InternalTopologyBuilder|KafkaStreams|ProcessorStateManager|StreamsPartitionAssignor|StreamThread|TaskManager).java"/>

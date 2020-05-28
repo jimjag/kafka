@@ -44,6 +44,7 @@ import org.apache.kafka.connect.runtime.errors.ErrorHandlingMetrics;
 import org.apache.kafka.connect.runtime.errors.ErrorReporter;
 import org.apache.kafka.connect.runtime.errors.LogReporter;
 import org.apache.kafka.connect.runtime.errors.RetryWithToleranceOperator;
+import org.apache.kafka.connect.runtime.errors.WorkerErrantRecordReporter;
 import org.apache.kafka.connect.runtime.isolation.Plugins;
 import org.apache.kafka.connect.runtime.isolation.Plugins.ClassLoaderUsage;
 import org.apache.kafka.connect.sink.SinkRecord;
@@ -57,6 +58,7 @@ import org.apache.kafka.connect.storage.OffsetBackingStore;
 import org.apache.kafka.connect.storage.OffsetStorageReader;
 import org.apache.kafka.connect.storage.OffsetStorageReaderImpl;
 import org.apache.kafka.connect.storage.OffsetStorageWriter;
+import org.apache.kafka.connect.util.ConnectUtils;
 import org.apache.kafka.connect.util.ConnectorTaskId;
 import org.apache.kafka.connect.util.LoggingContext;
 import org.apache.kafka.connect.util.SinkUtils;
@@ -94,6 +96,8 @@ public class Worker {
     private final ExecutorService executor;
     private final Time time;
     private final String workerId;
+    //kafka cluster id
+    private final String kafkaClusterId;
     private final Plugins plugins;
     private final ConnectMetrics metrics;
     private final WorkerMetricsGroup workerMetricsGroup;
@@ -129,7 +133,8 @@ public class Worker {
             ExecutorService executorService,
             ConnectorClientConfigOverridePolicy connectorClientConfigOverridePolicy
     ) {
-        this.metrics = new ConnectMetrics(workerId, config, time);
+        this.kafkaClusterId = ConnectUtils.lookupKafkaClusterId(config);
+        this.metrics = new ConnectMetrics(workerId, config, time, kafkaClusterId);
         this.executor = executorService;
         this.workerId = workerId;
         this.time = time;
@@ -530,13 +535,13 @@ public class Worker {
             OffsetStorageWriter offsetWriter = new OffsetStorageWriter(offsetBackingStore, id.connector(),
                     internalKeyConverter, internalValueConverter);
             Map<String, Object> producerProps = producerConfigs(id, "connector-producer-" + id, config, sourceConfig, connectorClass,
-                                                                connectorClientConfigOverridePolicy);
+                                                                connectorClientConfigOverridePolicy, kafkaClusterId);
             KafkaProducer<byte[], byte[]> producer = new KafkaProducer<>(producerProps);
             TopicAdmin admin;
             Map<String, TopicCreationGroup> topicCreationGroups;
             if (config.topicCreationEnable() && sourceConfig.usesTopicCreation()) {
                 Map<String, Object> adminProps = adminConfigs(id, "connector-adminclient-" + id, config,
-                        sourceConfig, connectorClass, connectorClientConfigOverridePolicy);
+                        sourceConfig, connectorClass, connectorClientConfigOverridePolicy, kafkaClusterId);
                 admin = new TopicAdmin(adminProps);
                 topicCreationGroups = TopicCreationGroup.configuredGroups(sourceConfig);
             } else {
@@ -553,13 +558,15 @@ public class Worker {
             log.info("Initializing: {}", transformationChain);
             SinkConnectorConfig sinkConfig = new SinkConnectorConfig(plugins, connConfig.originalsStrings());
             retryWithToleranceOperator.reporters(sinkTaskReporters(id, sinkConfig, errorHandlingMetrics, connectorClass));
+            WorkerErrantRecordReporter workerErrantRecordReporter = createWorkerErrantRecordReporter(sinkConfig, retryWithToleranceOperator,
+                    keyConverter, valueConverter, headerConverter);
 
-            Map<String, Object> consumerProps = consumerConfigs(id, config, connConfig, connectorClass, connectorClientConfigOverridePolicy);
+            Map<String, Object> consumerProps = consumerConfigs(id, config, connConfig, connectorClass, connectorClientConfigOverridePolicy, kafkaClusterId);
             KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(consumerProps);
 
             return new WorkerSinkTask(id, (SinkTask) task, statusListener, initialState, config, configState, metrics, keyConverter,
                                       valueConverter, headerConverter, transformationChain, consumer, loader, time,
-                                      retryWithToleranceOperator, herder.statusBackingStore());
+                                      retryWithToleranceOperator, workerErrantRecordReporter, herder.statusBackingStore());
         } else {
             log.error("Tasks must be a subclass of either SourceTask or SinkTask and current is {}", task);
             throw new ConnectException("Tasks must be a subclass of either SourceTask or SinkTask");
@@ -571,7 +578,8 @@ public class Worker {
                                                WorkerConfig config,
                                                ConnectorConfig connConfig,
                                                Class<? extends Connector>  connectorClass,
-                                               ConnectorClientConfigOverridePolicy connectorClientConfigOverridePolicy) {
+                                               ConnectorClientConfigOverridePolicy connectorClientConfigOverridePolicy,
+                                               String clusterId) {
         Map<String, Object> producerProps = new HashMap<>();
         producerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, Utils.join(config.getList(WorkerConfig.BOOTSTRAP_SERVERS_CONFIG), ","));
         producerProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.ByteArraySerializer");
@@ -586,6 +594,8 @@ public class Worker {
         producerProps.put(ProducerConfig.CLIENT_ID_CONFIG, defaultClientId);
         // User-specified overrides
         producerProps.putAll(config.originalsWithPrefix("producer."));
+        //add client metrics.context properties
+        ConnectUtils.addMetricsContextProperties(producerProps, config, clusterId);
 
         // Connector-specified overrides
         Map<String, Object> producerOverrides =
@@ -601,7 +611,8 @@ public class Worker {
                                                WorkerConfig config,
                                                ConnectorConfig connConfig,
                                                Class<? extends Connector> connectorClass,
-                                               ConnectorClientConfigOverridePolicy connectorClientConfigOverridePolicy) {
+                                               ConnectorClientConfigOverridePolicy connectorClientConfigOverridePolicy,
+                                               String clusterId) {
         // Include any unknown worker configs so consumer configs can be set globally on the worker
         // and through to the task
         Map<String, Object> consumerProps = new HashMap<>();
@@ -616,6 +627,8 @@ public class Worker {
         consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, "org.apache.kafka.common.serialization.ByteArrayDeserializer");
 
         consumerProps.putAll(config.originalsWithPrefix("consumer."));
+        //add client metrics.context properties
+        ConnectUtils.addMetricsContextProperties(consumerProps, config, clusterId);
         // Connector-specified overrides
         Map<String, Object> consumerOverrides =
             connectorClientConfigOverrides(id, connConfig, connectorClass, ConnectorConfig.CONNECTOR_CLIENT_CONSUMER_OVERRIDES_PREFIX,
@@ -631,7 +644,8 @@ public class Worker {
                                             WorkerConfig config,
                                             ConnectorConfig connConfig,
                                             Class<? extends Connector> connectorClass,
-                                            ConnectorClientConfigOverridePolicy connectorClientConfigOverridePolicy) {
+                                            ConnectorClientConfigOverridePolicy connectorClientConfigOverridePolicy,
+                                            String clusterId) {
         Map<String, Object> adminProps = new HashMap<>();
         // Use the top-level worker configs to retain backwards compatibility with older releases which
         // did not require a prefix for connector admin client configs in the worker configuration file
@@ -657,6 +671,9 @@ public class Worker {
                                            ConnectorType.SINK, ConnectorClientConfigRequest.ClientType.ADMIN,
                                            connectorClientConfigOverridePolicy);
         adminProps.putAll(adminOverrides);
+
+        //add client metrics.context properties
+        ConnectUtils.addMetricsContextProperties(adminProps, config, clusterId);
 
         return adminProps;
     }
@@ -701,9 +718,10 @@ public class Worker {
         String topic = connConfig.dlqTopicName();
         if (topic != null && !topic.isEmpty()) {
             Map<String, Object> producerProps = producerConfigs(id, "connector-dlq-producer-" + id, config, connConfig, connectorClass,
-                                                                connectorClientConfigOverridePolicy);
-            Map<String, Object> adminProps = adminConfigs(id, "connector-dlq-adminclient-", config, connConfig, connectorClass, connectorClientConfigOverridePolicy);
+                                                                connectorClientConfigOverridePolicy, kafkaClusterId);
+            Map<String, Object> adminProps = adminConfigs(id, "connector-dlq-adminclient-", config, connConfig, connectorClass, connectorClientConfigOverridePolicy, kafkaClusterId);
             DeadLetterQueueReporter reporter = DeadLetterQueueReporter.createAndSetup(adminProps, id, connConfig, producerProps, errorHandlingMetrics);
+
             reporters.add(reporter);
         }
 
@@ -717,6 +735,20 @@ public class Worker {
         reporters.add(logReporter);
 
         return reporters;
+    }
+
+    private WorkerErrantRecordReporter createWorkerErrantRecordReporter(
+        SinkConnectorConfig connConfig,
+        RetryWithToleranceOperator retryWithToleranceOperator,
+        Converter keyConverter,
+        Converter valueConverter,
+        HeaderConverter headerConverter
+    ) {
+        // check if errant record reporter topic is configured
+        if (connConfig.enableErrantRecordReporter()) {
+            return new WorkerErrantRecordReporter(retryWithToleranceOperator, keyConverter, valueConverter, headerConverter);
+        }
+        return null;
     }
 
     private void stopTask(ConnectorTaskId taskId) {
