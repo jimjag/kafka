@@ -531,6 +531,7 @@ public class KafkaAdminClient extends AdminClient {
         return new LogContext("[AdminClient clientId=" + clientId + "] ");
     }
 
+    @SuppressWarnings("deprecation")
     private KafkaAdminClient(AdminClientConfig config,
                              String clientId,
                              Time time,
@@ -1949,7 +1950,8 @@ public class KafkaAdminClient extends AdminClient {
                             .map(config ->
                                 new DescribeConfigsRequestData.DescribeConfigsResource()
                                     .setResourceName(config.name())
-                                    .setResourceType(config.type().id()))
+                                    .setResourceType(config.type().id())
+                                    .setConfigurationKeys(null))
                             .collect(Collectors.toList()))
                         .setIncludeSynonyms(options.includeSynonyms())
                         .setIncludeDocumentation(options.includeDocumentation()));
