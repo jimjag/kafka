@@ -17,28 +17,21 @@
 package org.apache.kafka.common.errors;
 
 /**
- * This server is not the leader for the given partition.
- * @deprecated since 2.6. Use {@link NotLeaderOrFollowerException}.
+ * Exception thrown if an operation on a resource exceeds the throttling quota.
  */
-@Deprecated
-public class NotLeaderForPartitionException extends InvalidMetadataException {
+public class ThrottlingQuotaExceededException extends RetriableException {
+    private int throttleTimeMs = 0;
 
-    private static final long serialVersionUID = 1L;
-
-    public NotLeaderForPartitionException() {
-        super();
-    }
-
-    public NotLeaderForPartitionException(String message) {
+    public ThrottlingQuotaExceededException(String message) {
         super(message);
     }
 
-    public NotLeaderForPartitionException(Throwable cause) {
-        super(cause);
+    public ThrottlingQuotaExceededException(int throttleTimeMs, String message) {
+        super(message);
+        this.throttleTimeMs = throttleTimeMs;
     }
 
-    public NotLeaderForPartitionException(String message, Throwable cause) {
-        super(message, cause);
+    public int throttleTimeMs() {
+        return this.throttleTimeMs;
     }
-
 }
