@@ -241,7 +241,11 @@ subprojects {
     }
   }
 
-  def shouldUseJUnit5 = ["tools", "raft", "log4j-appender", "examples"].contains(it.project.name)
+  // Remove the relevant project name once it's converted to JUnit 5
+  def shouldUseJUnit5 = !(["api", "basic-auth-extension", "connect", "core", "file", "generator",
+    "json", "mirror", "mirorr-client", "runtime", "transform", "examples", "streams-scala",
+     "streams"].contains(it.project.name) || it.project.name.startsWith("upgrade-system-tests-"))
+
   def testLoggingEvents = ["passed", "skipped", "failed"]
   def testShowStandardStreams = false
   def testExceptionFormat = 'full'
@@ -1067,8 +1071,7 @@ project(':clients') {
     jacksonDatabindConfig libs.jacksonDatabind // to publish as provided scope dependency.
 
     testCompile libs.bcpkix
-    testCompile libs.junitJupiterApi
-    testCompile libs.junitVintageEngine
+    testCompile libs.junitJupiter
     testCompile libs.mockitoCore
 
     testRuntime libs.slf4jlog4j
@@ -1490,8 +1493,7 @@ project(':streams:test-utils') {
     compile project(':clients')
 
     testCompile project(':clients').sourceSets.test.output
-    testCompile libs.junitJupiterApi
-    testCompile libs.junitVintageEngine
+    testCompile libs.junitJupiter
     testCompile libs.easymock
     testCompile libs.hamcrest
 
