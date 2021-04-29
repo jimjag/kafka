@@ -14,13 +14,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.kafka.streams.state.internals;
 
-package org.apache.kafka.streams;
+import org.apache.kafka.common.serialization.Serde;
+import org.apache.kafka.streams.kstream.internals.WrappingNullableSerde;
 
-import java.util.Collections;
-
-public class TopologyTestDriverEosTest extends TopologyTestDriverTest {
-    TopologyTestDriverEosTest() {
-        super(Collections.singletonMap(StreamsConfig.PROCESSING_GUARANTEE_CONFIG, StreamsConfig.EXACTLY_ONCE_V2));
+public class KeyAndJoinSideSerde<K> extends WrappingNullableSerde<KeyAndJoinSide<K>, K, Void> {
+    public KeyAndJoinSideSerde(final Serde<K> keySerde) {
+        super(
+            new KeyAndJoinSideSerializer<>(keySerde != null ? keySerde.serializer() : null),
+            new KeyAndJoinSideDeserializer<>(keySerde != null ? keySerde.deserializer() : null)
+        );
     }
 }
