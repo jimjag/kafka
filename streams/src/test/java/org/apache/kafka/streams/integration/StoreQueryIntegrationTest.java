@@ -60,6 +60,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import static java.util.Collections.singletonList;
 import static org.apache.kafka.streams.integration.utils.IntegrationTestUtils.getStore;
 import static org.apache.kafka.streams.integration.utils.IntegrationTestUtils.safeUniqueTestName;
 import static org.apache.kafka.streams.integration.utils.IntegrationTestUtils.startApplicationAndWaitUntilRunning;
@@ -71,9 +72,9 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.matchesRegex;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
+import static org.hamcrest.Matchers.oneOf;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
-
 
 @Category({IntegrationTest.class})
 public class StoreQueryIntegrationTest {
@@ -151,10 +152,16 @@ public class StoreQueryIntegrationTest {
                 return true;
             } catch (final InvalidStateStoreException exception) {
                 assertThat(
-                    exception.getMessage(),
-                    containsString("Cannot get state store source-table because the stream thread is PARTITIONS_ASSIGNED, not RUNNING")
+                        "Unexpected exception thrown while getting the value from store.",
+                        exception.getMessage(),
+                        is(
+                                oneOf(
+                                        containsString("Cannot get state store source-table because the stream thread is PARTITIONS_ASSIGNED, not RUNNING"),
+                                        containsString("The state store, source-table, may have migrated to another instance")
+                                )
+                        )
                 );
-                LOG.info("Streams wasn't running. Will try again.");
+                LOG.info("Either streams wasn't running or a re-balancing took place. Will try again.");
                 return false;
             }
         });
@@ -421,26 +428,20 @@ public class StoreQueryIntegrationTest {
         final int key2 = 2;
         final int key3 = 3;
         final Semaphore semaphore = new Semaphore(0);
-        final int numStreamThreads = 1;
 
         final StreamsBuilder builder = new StreamsBuilder();
         builder.table(INPUT_TOPIC_NAME, Consumed.with(Serdes.Integer(), Serdes.Integer()),
                       Materialized.<Integer, Integer, KeyValueStore<Bytes, byte[]>>as(TABLE_NAME)
                           .withCachingDisabled())
                .toStream()
-               .peek((k, v) -> {
-                   if (k.equals(key3)) {
-                       semaphore.release();
-                   }
-               });
+               .peek((k, v) -> semaphore.release());
 
         final Properties streamsConfiguration1 = streamsConfiguration();
-        streamsConfiguration1.put(StreamsConfig.NUM_STREAM_THREADS_CONFIG, numStreamThreads);
+        streamsConfiguration1.put(StreamsConfig.NUM_STREAM_THREADS_CONFIG, 1);
 
         final KafkaStreams kafkaStreams1 = createKafkaStreams(builder, streamsConfiguration1);
-        final List<KafkaStreams> kafkaStreamsList = Arrays.asList(kafkaStreams1);
 
-        startApplicationAndWaitUntilRunning(kafkaStreamsList, Duration.ofSeconds(60));
+        startApplicationAndWaitUntilRunning(singletonList(kafkaStreams1), Duration.ofSeconds(60));
         //Add thread
         final Optional<String> streamThread = kafkaStreams1.addStreamThread();
         assertThat(streamThread.isPresent(), is(true));
@@ -450,7 +451,7 @@ public class StoreQueryIntegrationTest {
         produceValueRange(key3, 0, batch1NumMessages);
 
         // Assert that all messages in the batches were processed in a timely manner
-        assertThat(semaphore.tryAcquire(batch1NumMessages, 60, TimeUnit.SECONDS), is(equalTo(true)));
+        assertThat(semaphore.tryAcquire(3 * batch1NumMessages, 60, TimeUnit.SECONDS), is(equalTo(true)));
 
         until(() -> {
             final QueryableStoreType<ReadOnlyKeyValueStore<Integer, Integer>> queryableStoreType = keyValueStore();
