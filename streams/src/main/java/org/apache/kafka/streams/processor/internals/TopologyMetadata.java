@@ -29,8 +29,8 @@ import org.apache.kafka.streams.internals.StreamsConfigUtils.ProcessingMode;
 import org.apache.kafka.streams.processor.StateStore;
 import org.apache.kafka.streams.processor.TaskId;
 import org.apache.kafka.streams.processor.internals.InternalTopologyBuilder.TopicsInfo;
+import org.apache.kafka.streams.TopologyConfig.TaskConfig;
 import org.apache.kafka.streams.processor.internals.namedtopology.NamedTopology;
-import org.apache.kafka.streams.processor.internals.namedtopology.TopologyConfig.TaskConfig;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -170,11 +170,14 @@ public class TopologyMetadata {
         return taskExecutionMetadata;
     }
 
-    public Set<String> updateThreadTopologyVersion(final String threadName) {
+    public void executeTopologyUpdatesAndBumpThreadVersion(final Consumer<Set<String>> handleTopologyAdditions,
+                                                           final Consumer<Set<String>> handleTopologyRemovals) {
         try {
             version.topologyLock.lock();
-            threadVersions.put(threadName, topologyVersion());
-            return namedTopologiesView();
+            final long latestTopologyVersion = topologyVersion();
+            handleTopologyAdditions.accept(namedTopologiesView());
+            handleTopologyRemovals.accept(namedTopologiesView());
+            threadVersions.put(Thread.currentThread().getName(), latestTopologyVersion);
         } finally {
             version.topologyLock.unlock();
         }
