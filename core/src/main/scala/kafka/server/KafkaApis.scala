@@ -19,7 +19,6 @@ package kafka.server
 
 import kafka.admin.AdminUtils
 import kafka.api.ElectLeadersRequestOps
-import kafka.common.OffsetAndMetadata
 import kafka.controller.ReplicaAssignment
 import kafka.coordinator.group._
 import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinator}
@@ -69,7 +68,7 @@ import org.apache.kafka.common.{Node, TopicIdPartition, TopicPartition, Uuid}
 import org.apache.kafka.server.authorizer._
 import org.apache.kafka.server.common.MetadataVersion
 import org.apache.kafka.server.common.MetadataVersion.{IBP_0_11_0_IV0, IBP_2_3_IV0}
-import org.apache.kafka.server.log.internals.AppendOrigin
+import org.apache.kafka.server.log.internals.{AppendOrigin, FetchIsolation, FetchParams, FetchPartitionData}
 import org.apache.kafka.server.record.BrokerCompressionType
 
 import java.lang.{Long => JLong}
@@ -80,7 +79,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.{Collections, Optional}
 import scala.annotation.nowarn
 import scala.collection.mutable.ArrayBuffer
-import scala.collection.{Map, Seq, Set, immutable, mutable}
+import scala.collection.{Map, Seq, Set, mutable}
 import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Success, Try}
 
@@ -207,7 +206,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         case ApiKeys.ADD_OFFSETS_TO_TXN => handleAddOffsetsToTxnRequest(request, requestLocal)
         case ApiKeys.END_TXN => handleEndTxnRequest(request, requestLocal)
         case ApiKeys.WRITE_TXN_MARKERS => handleWriteTxnMarkersRequest(request, requestLocal)
-        case ApiKeys.TXN_OFFSET_COMMIT => handleTxnOffsetCommitRequest(request, requestLocal)
+        case ApiKeys.TXN_OFFSET_COMMIT => handleTxnOffsetCommitRequest(request, requestLocal).exceptionally(handleError)
         case ApiKeys.DESCRIBE_ACLS => handleDescribeAcls(request)
         case ApiKeys.CREATE_ACLS => maybeForwardToController(request, handleCreateAcls)
         case ApiKeys.DELETE_ACLS => maybeForwardToController(request, handleDeleteAcls)
@@ -840,8 +839,8 @@ class KafkaApis(val requestChannel: RequestChannel,
       val partitions = new util.LinkedHashMap[TopicIdPartition, FetchResponseData.PartitionData]
       val reassigningPartitions = mutable.Set[TopicIdPartition]()
       responsePartitionData.foreach { case (tp, data) =>
-        val abortedTransactions = data.abortedTransactions.map(_.asJava).orNull
-        val lastStableOffset = data.lastStableOffset.getOrElse(FetchResponse.INVALID_LAST_STABLE_OFFSET)
+        val abortedTransactions = data.abortedTransactions.orElse(null)
+        val lastStableOffset: Long = data.lastStableOffset.orElse(FetchResponse.INVALID_LAST_STABLE_OFFSET)
         if (data.isReassignmentFetch) reassigningPartitions.add(tp)
         val partitionData = new FetchResponseData.PartitionData()
           .setPartitionIndex(tp.partition)
@@ -851,8 +850,8 @@ class KafkaApis(val requestChannel: RequestChannel,
           .setLogStartOffset(data.logStartOffset)
           .setAbortedTransactions(abortedTransactions)
           .setRecords(data.records)
-          .setPreferredReadReplica(data.preferredReadReplica.getOrElse(FetchResponse.INVALID_PREFERRED_REPLICA_ID))
-        data.divergingEpoch.foreach(partitionData.setDivergingEpoch)
+          .setPreferredReadReplica(data.preferredReadReplica.orElse(FetchResponse.INVALID_PREFERRED_REPLICA_ID))
+        data.divergingEpoch.ifPresent(partitionData.setDivergingEpoch(_))
         partitions.put(tp, partitionData)
       }
       erroneous.foreach { case (tp, data) => partitions.put(tp, data) }
@@ -961,26 +960,26 @@ class KafkaApis(val requestChannel: RequestChannel,
       val fetchMaxBytes = Math.min(Math.min(fetchRequest.maxBytes, config.fetchMaxBytes), maxQuotaWindowBytes)
       val fetchMinBytes = Math.min(fetchRequest.minBytes, fetchMaxBytes)
 
-      val clientMetadata: Option[ClientMetadata] = if (versionId >= 11) {
+      val clientMetadata: Optional[ClientMetadata] = if (versionId >= 11) {
         // Fetch API version 11 added preferred replica logic
-        Some(new DefaultClientMetadata(
+        Optional.of(new DefaultClientMetadata(
           fetchRequest.rackId,
           clientId,
           request.context.clientAddress,
           request.context.principal,
           request.context.listenerName.value))
       } else {
-        None
+        Optional.empty()
       }
 
-      val params = FetchParams(
-        requestVersion = versionId,
-        replicaId = fetchRequest.replicaId,
-        maxWaitMs = fetchRequest.maxWait,
-        minBytes = fetchMinBytes,
-        maxBytes = fetchMaxBytes,
-        isolation = FetchIsolation(fetchRequest),
-        clientMetadata = clientMetadata
+      val params = new FetchParams(
+        versionId,
+        fetchRequest.replicaId,
+        fetchRequest.maxWait,
+        fetchMinBytes,
+        fetchMaxBytes,
+        FetchIsolation.of(fetchRequest),
+        clientMetadata
       )
 
       // call the replica manager to fetch messages from the local replica
@@ -2500,87 +2499,105 @@ class KafkaApis(val requestChannel: RequestChannel,
     }
   }
 
-  def handleTxnOffsetCommitRequest(request: RequestChannel.Request, requestLocal: RequestLocal): Unit = {
+  def handleTxnOffsetCommitRequest(
+    request: RequestChannel.Request,
+    requestLocal: RequestLocal
+  ): CompletableFuture[Unit] = {
     ensureInterBrokerVersion(IBP_0_11_0_IV0)
-    val header = request.header
     val txnOffsetCommitRequest = request.body[TxnOffsetCommitRequest]
+
+    def sendResponse(response: TxnOffsetCommitResponse): Unit = {
+      // We need to replace COORDINATOR_LOAD_IN_PROGRESS with COORDINATOR_NOT_AVAILABLE
+      // for older producer client from 0.11 to prior 2.0, which could potentially crash due
+      // to unexpected loading error. This bug is fixed later by KAFKA-7296. Clients using
+      // txn commit protocol >= 2 (version 2.3 and onwards) are guaranteed to have
+      // the fix to check for the loading error.
+      if (txnOffsetCommitRequest.version < 2) {
+        response.data.topics.forEach { topic =>
+          topic.partitions.forEach { partition =>
+            if (partition.errorCode == Errors.COORDINATOR_LOAD_IN_PROGRESS.code) {
+              partition.setErrorCode(Errors.COORDINATOR_NOT_AVAILABLE.code)
+            }
+          }
+        }
+      }
+
+      requestHelper.sendMaybeThrottle(request, response)
+    }
 
     // authorize for the transactionalId and the consumer group. Note that we skip producerId authorization
     // since it is implied by transactionalId authorization
-    if (!authHelper.authorize(request.context, WRITE, TRANSACTIONAL_ID, txnOffsetCommitRequest.data.transactionalId))
-      requestHelper.sendErrorResponseMaybeThrottle(request, Errors.TRANSACTIONAL_ID_AUTHORIZATION_FAILED.exception)
-    else if (!authHelper.authorize(request.context, READ, GROUP, txnOffsetCommitRequest.data.groupId))
-      requestHelper.sendErrorResponseMaybeThrottle(request, Errors.GROUP_AUTHORIZATION_FAILED.exception)
-    else {
-      val unauthorizedTopicErrors = mutable.Map[TopicPartition, Errors]()
-      val nonExistingTopicErrors = mutable.Map[TopicPartition, Errors]()
-      val authorizedTopicCommittedOffsets = mutable.Map[TopicPartition, TxnOffsetCommitRequest.CommittedOffset]()
-      val committedOffsets = txnOffsetCommitRequest.offsets.asScala
-      val authorizedTopics = authHelper.filterByAuthorized(request.context, READ, TOPIC, committedOffsets)(_._1.topic)
+    if (!authHelper.authorize(request.context, WRITE, TRANSACTIONAL_ID, txnOffsetCommitRequest.data.transactionalId)) {
+      sendResponse(txnOffsetCommitRequest.getErrorResponse(Errors.TRANSACTIONAL_ID_AUTHORIZATION_FAILED.exception))
+      CompletableFuture.completedFuture[Unit](())
+    } else if (!authHelper.authorize(request.context, READ, GROUP, txnOffsetCommitRequest.data.groupId)) {
+      sendResponse(txnOffsetCommitRequest.getErrorResponse(Errors.GROUP_AUTHORIZATION_FAILED.exception))
+      CompletableFuture.completedFuture[Unit](())
+    } else {
+      val authorizedTopics = authHelper.filterByAuthorized(
+        request.context,
+        READ,
+        TOPIC,
+        txnOffsetCommitRequest.data.topics.asScala
+      )(_.name)
 
-      for ((topicPartition, commitedOffset) <- committedOffsets) {
-        if (!authorizedTopics.contains(topicPartition.topic))
-          unauthorizedTopicErrors += topicPartition -> Errors.TOPIC_AUTHORIZATION_FAILED
-        else if (!metadataCache.contains(topicPartition))
-          nonExistingTopicErrors += topicPartition -> Errors.UNKNOWN_TOPIC_OR_PARTITION
-        else
-          authorizedTopicCommittedOffsets += (topicPartition -> commitedOffset)
-      }
+      val responseBuilder = new TxnOffsetCommitResponse.Builder()
+      val authorizedTopicCommittedOffsets = new mutable.ArrayBuffer[TxnOffsetCommitRequestData.TxnOffsetCommitRequestTopic]()
+      txnOffsetCommitRequest.data.topics.forEach { topic =>
+        if (!authorizedTopics.contains(topic.name)) {
+          // If the topic is not authorized, we add the topic and all its partitions
+          // to the response with TOPIC_AUTHORIZATION_FAILED.
+          responseBuilder.addPartitions[TxnOffsetCommitRequestData.TxnOffsetCommitRequestPartition](
+            topic.name, topic.partitions, _.partitionIndex, Errors.TOPIC_AUTHORIZATION_FAILED)
+        } else if (!metadataCache.contains(topic.name)) {
+          // If the topic is unknown, we add the topic and all its partitions
+          // to the response with UNKNOWN_TOPIC_OR_PARTITION.
+          responseBuilder.addPartitions[TxnOffsetCommitRequestData.TxnOffsetCommitRequestPartition](
+            topic.name, topic.partitions, _.partitionIndex, Errors.UNKNOWN_TOPIC_OR_PARTITION)
+        } else {
+          // Otherwise, we check all partitions to ensure that they all exist.
+          val topicWithValidPartitions = new TxnOffsetCommitRequestData.TxnOffsetCommitRequestTopic().setName(topic.name)
 
-      // the callback for sending an offset commit response
-      def sendResponseCallback(authorizedTopicErrors: Map[TopicPartition, Errors]): Unit = {
-        val combinedCommitStatus = mutable.Map() ++= authorizedTopicErrors ++= unauthorizedTopicErrors ++= nonExistingTopicErrors
-        if (isDebugEnabled)
-          combinedCommitStatus.forKeyValue { (topicPartition, error) =>
-            if (error != Errors.NONE) {
-              debug(s"TxnOffsetCommit with correlation id ${header.correlationId} from client ${header.clientId} " +
-                s"on partition $topicPartition failed due to ${error.exceptionName}")
+          topic.partitions.forEach { partition =>
+            if (metadataCache.getPartitionInfo(topic.name, partition.partitionIndex).nonEmpty) {
+              topicWithValidPartitions.partitions.add(partition)
+            } else {
+              responseBuilder.addPartition(topic.name, partition.partitionIndex, Errors.UNKNOWN_TOPIC_OR_PARTITION)
             }
           }
 
-        // We need to replace COORDINATOR_LOAD_IN_PROGRESS with COORDINATOR_NOT_AVAILABLE
-        // for older producer client from 0.11 to prior 2.0, which could potentially crash due
-        // to unexpected loading error. This bug is fixed later by KAFKA-7296. Clients using
-        // txn commit protocol >= 2 (version 2.3 and onwards) are guaranteed to have
-        // the fix to check for the loading error.
-        if (txnOffsetCommitRequest.version < 2) {
-          combinedCommitStatus ++= combinedCommitStatus.collect {
-            case (tp, error) if error == Errors.COORDINATOR_LOAD_IN_PROGRESS => tp -> Errors.COORDINATOR_NOT_AVAILABLE
+          if (!topicWithValidPartitions.partitions.isEmpty) {
+            authorizedTopicCommittedOffsets += topicWithValidPartitions
           }
         }
-
-        requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
-          new TxnOffsetCommitResponse(requestThrottleMs, combinedCommitStatus.asJava))
       }
 
-      if (authorizedTopicCommittedOffsets.isEmpty)
-        sendResponseCallback(Map.empty)
-      else {
-        val offsetMetadata = convertTxnOffsets(authorizedTopicCommittedOffsets.toMap)
-        groupCoordinator.handleTxnCommitOffsets(
-          txnOffsetCommitRequest.data.groupId,
-          txnOffsetCommitRequest.data.producerId,
-          txnOffsetCommitRequest.data.producerEpoch,
-          txnOffsetCommitRequest.data.memberId,
-          Option(txnOffsetCommitRequest.data.groupInstanceId),
-          txnOffsetCommitRequest.data.generationId,
-          offsetMetadata,
-          sendResponseCallback,
-          requestLocal)
-      }
-    }
-  }
+      if (authorizedTopicCommittedOffsets.isEmpty) {
+        sendResponse(responseBuilder.build())
+        CompletableFuture.completedFuture[Unit](())
+      } else {
+        val txnOffsetCommitRequestData = new TxnOffsetCommitRequestData()
+          .setGroupId(txnOffsetCommitRequest.data.groupId)
+          .setMemberId(txnOffsetCommitRequest.data.memberId)
+          .setGenerationId(txnOffsetCommitRequest.data.generationId)
+          .setGroupInstanceId(txnOffsetCommitRequest.data.groupInstanceId)
+          .setProducerEpoch(txnOffsetCommitRequest.data.producerEpoch)
+          .setProducerId(txnOffsetCommitRequest.data.producerId)
+          .setTransactionalId(txnOffsetCommitRequest.data.transactionalId)
+          .setTopics(authorizedTopicCommittedOffsets.asJava)
 
-  private def convertTxnOffsets(offsetsMap: immutable.Map[TopicPartition, TxnOffsetCommitRequest.CommittedOffset]): immutable.Map[TopicPartition, OffsetAndMetadata] = {
-    val currentTimestamp = time.milliseconds
-    offsetsMap.map { case (topicPartition, partitionData) =>
-      val metadata = if (partitionData.metadata == null) OffsetAndMetadata.NoMetadata else partitionData.metadata
-      topicPartition -> new OffsetAndMetadata(
-        offset = partitionData.offset,
-        leaderEpoch = partitionData.leaderEpoch,
-        metadata = metadata,
-        commitTimestamp = currentTimestamp,
-        expireTimestamp = None)
+        newGroupCoordinator.commitTransactionalOffsets(
+          request.context,
+          txnOffsetCommitRequestData,
+          requestLocal.bufferSupplier
+        ).handle[Unit] { (response, exception) =>
+          if (exception != null) {
+            sendResponse(txnOffsetCommitRequest.getErrorResponse(exception))
+          } else {
+            sendResponse(responseBuilder.merge(response).build())
+          }
+        }
+      }
     }
   }
 
