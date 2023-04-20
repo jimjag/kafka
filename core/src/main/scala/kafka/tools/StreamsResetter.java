@@ -14,20 +14,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package kafka.tools;
 
-package org.apache.kafka.streams.kstream.internals.graph;
 
-/**
- * Indicates a table processor node that behaves differently depending on whether the upstream
- * table is versioned or unversioned. Versioned semantics are disabled by default, and enabled
- * as part of {@code InternalStreamsBuilder#buildAndOptimizeTopology()} if an upstream table
- * is identified to be versioned.
- */
-public interface VersionedSemanticsGraphNode {
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 
-    /**
-     * @param useVersionedSemantics whether versioned semantics should be enabled
-     */
-    void enableVersionedSemantics(boolean useVersionedSemantics, String parentNodeName);
+@Deprecated
+public class StreamsResetter {
 
+    public static void main(String[] args) throws ClassNotFoundException, NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+        System.out.println("WARNING: The 'kafka.tools' package is deprecated and will change to 'org.apache.kafka.tools' in the next major release.");
+        Class<?> toolClass = Class.forName("org.apache.kafka.tools.StreamsResetter");
+        Method main = toolClass.getDeclaredMethod("main", String[].class);
+        main.invoke(null, (Object) args);
+    }
 }
