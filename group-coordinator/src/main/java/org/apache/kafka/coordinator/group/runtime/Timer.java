@@ -14,24 +14,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.metadata.migration;
+package org.apache.kafka.coordinator.group.runtime;
 
-import org.apache.kafka.image.MetadataDelta;
-import org.apache.kafka.image.MetadataImage;
+import java.util.concurrent.TimeUnit;
 
-public interface LegacyPropagator {
+/**
+ * An interface to schedule and cancel operations.
+ */
+public interface Timer {
 
-    void startup();
+    /**
+     * Add an operation to the timer. If an operation with the same key
+     * already exists, replace it with the new operation.
+     *
+     * @param key         The key to identify this operation.
+     * @param delay       The delay to wait before expiring.
+     * @param unit        The delay unit.
+     * @param operation   The operation to perform upon expiration.
+     */
+    void schedule(String key, long delay, TimeUnit unit, Runnable operation);
 
-    void shutdown();
-
-    void publishMetadata(MetadataImage image);
-
-    void sendRPCsToBrokersFromMetadataDelta(MetadataDelta delta,
-                                            MetadataImage image,
-                                            int zkControllerEpoch);
-
-    void sendRPCsToBrokersFromMetadataImage(MetadataImage image, int zkControllerEpoch);
-
-    void clear();
+    /**
+     * Remove an operation corresponding to a given key.
+     *
+     * @param key The key.
+     */
+    void cancel(String key);
 }
