@@ -774,7 +774,7 @@ def fineTuneEclipseClasspathFile(eclipse, project) {
       }
       /*
        * Set all eclipse build output to go to 'build_eclipse' directory. This is to ensure that gradle and eclipse use different
-       * build output directories, and also avoid using the eclpise default of 'bin' which clashes with some of our script directories.
+       * build output directories, and also avoid using the eclipse default of 'bin' which clashes with some of our script directories.
        * https://discuss.gradle.org/t/eclipse-generated-files-should-be-put-in-the-same-place-as-the-gradle-generated-files/6986/2
        */
       cp.entries.findAll { it.kind == "output" }*.path = "build_eclipse"
@@ -2171,6 +2171,7 @@ project(':streams') {
             ':streams:upgrade-system-tests-32:test',
             ':streams:upgrade-system-tests-33:test',
             ':streams:upgrade-system-tests-34:test',
+            ':streams:upgrade-system-tests-35:test',
             ':streams:examples:test'
     ]
   )
@@ -2561,6 +2562,19 @@ project(':streams:upgrade-system-tests-34') {
 
   dependencies {
     testImplementation libs.kafkaStreams_34
+    testRuntimeOnly libs.junitJupiter
+  }
+
+  systemTestLibs {
+    dependsOn testJar
+  }
+}
+
+project(':streams:upgrade-system-tests-35') {
+  archivesBaseName = "kafka-streams-upgrade-system-tests-35"
+
+  dependencies {
+    testImplementation libs.kafkaStreams_35
     testRuntimeOnly libs.junitJupiter
   }
 
