@@ -14,14 +14,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.streams.kstream.internals.graph;
 
-import org.apache.kafka.streams.processor.internals.StoreFactory;
+package org.apache.kafka.coordinator.group.assignor;
 
-public class TableSuppressNode<K, V> extends StatefulProcessorNode<K, V> {
-    public TableSuppressNode(final String nodeName,
-                             final ProcessorParameters<K, V, ?, ?> processorParameters,
-                             final StoreFactory materializedKTableStoreBuilder) {
-        super(nodeName, processorParameters, materializedKTableStoreBuilder);
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class GeneralUniformAssignmentBuilder extends AbstractUniformAssignmentBuilder {
+    private static final Logger LOG = LoggerFactory.getLogger(GeneralUniformAssignmentBuilder.class);
+
+    @Override
+    protected GroupAssignment buildAssignment() {
+        return null;
     }
 }
