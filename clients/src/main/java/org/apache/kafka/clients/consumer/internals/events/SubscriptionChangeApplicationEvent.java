@@ -14,23 +14,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.common.record;
 
-public class ConvertedRecords<T extends Records> {
+package org.apache.kafka.clients.consumer.internals.events;
 
-    private final T records;
-    private final RecordValidationStats recordValidationStats;
+/**
+ * Application event indicating that the subscription state has changed, triggered when a user
+ * calls the subscribe API. This will make the consumer join a consumer group if not part of it
+ * yet, or just send the updated subscription to the broker if it's already a member of the group.
+ */
+public class SubscriptionChangeApplicationEvent extends ApplicationEvent {
 
-    public ConvertedRecords(T records, RecordValidationStats recordValidationStats) {
-        this.records = records;
-        this.recordValidationStats = recordValidationStats;
-    }
-
-    public T records() {
-        return records;
-    }
-
-    public RecordValidationStats recordConversionStats() {
-        return recordValidationStats;
+    public SubscriptionChangeApplicationEvent() {
+        super(Type.SUBSCRIPTION_CHANGE);
     }
 }
