@@ -14,21 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.storage.internals.checkpoint;
+package org.apache.kafka.streams.processor.internals;
 
-import org.apache.kafka.storage.internals.log.EpochEntry;
+import org.apache.kafka.streams.processor.internals.tasks.DefaultTaskExecutor;
 
-import java.util.Collection;
-import java.util.List;
-
-public interface LeaderEpochCheckpoint {
-    // in file-backed checkpoint implementation, the content should be
-    // synced to the device if `sync` is true
-    void write(Collection<EpochEntry> epochs, boolean sync);
-
-    default void write(Collection<EpochEntry> epochs) {
-        write(epochs, true);
-    }
-
-    List<EpochEntry> read();
+/**
+ * Common interface for {@link StreamThread} and {@link DefaultTaskExecutor} threads.
+ *
+ * This interface defines no behaviour, but tags processing threads so they can be differentiated from interactive query
+ * threads.
+ */
+public interface ProcessingThread {
 }
