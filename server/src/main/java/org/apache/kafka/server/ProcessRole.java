@@ -15,33 +15,20 @@
  * limitations under the License.
  */
 
-package org.apache.kafka.trogdor.rest;
+package org.apache.kafka.server;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonProperty;
+public enum ProcessRole {
+    BrokerRole("broker"),
+    ControllerRole("controller");
 
-/**
- * A response from the Trogdor Agent/Coordinator about how long it has been running
- */
-public class UptimeResponse extends Message {
+    private final String roleName;
 
-    private final long serverStartMs;
-    private final long nowMs;
-
-    @JsonCreator
-    public UptimeResponse(@JsonProperty("serverStartMs") long serverStartMs,
-                          @JsonProperty("nowMs") long nowMs) {
-        this.serverStartMs = serverStartMs;
-        this.nowMs = nowMs;
+    ProcessRole(String roleName) {
+        this.roleName = roleName;
     }
 
-    @JsonProperty
-    public long serverStartMs() {
-        return serverStartMs;
-    }
-
-    @JsonProperty
-    public long nowMs() {
-        return nowMs;
+    @Override
+    public String toString() {
+        return roleName;
     }
 }
