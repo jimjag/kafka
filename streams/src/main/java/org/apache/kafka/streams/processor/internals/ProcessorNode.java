@@ -24,7 +24,6 @@ import org.apache.kafka.streams.errors.TaskCorruptedException;
 import org.apache.kafka.streams.errors.TaskMigratedException;
 import org.apache.kafka.streams.errors.internals.DefaultErrorHandlerContext;
 import org.apache.kafka.streams.errors.internals.FailedProcessingException;
-import org.apache.kafka.streams.processor.Punctuator;
 import org.apache.kafka.streams.processor.api.FixedKeyProcessor;
 import org.apache.kafka.streams.processor.api.FixedKeyProcessorContext;
 import org.apache.kafka.streams.processor.api.InternalFixedKeyRecordFactory;
@@ -45,7 +44,7 @@ import static org.apache.kafka.streams.StreamsConfig.PROCESSING_EXCEPTION_HANDLE
 
 public class ProcessorNode<KIn, VIn, KOut, VOut> {
 
-    private final Logger log = LoggerFactory.getLogger(ProcessorNode.class);
+    private static final Logger log = LoggerFactory.getLogger(ProcessorNode.class);
     private final List<ProcessorNode<KOut, VOut, ?, ?>> children;
     private final Map<String, ProcessorNode<KOut, VOut, ?, ?>> childByName;
 
@@ -203,7 +202,7 @@ public class ProcessorNode<KIn, VIn, KOut, VOut> {
         } catch (final FailedProcessingException | TaskCorruptedException | TaskMigratedException e) {
             // Rethrow exceptions that should not be handled here
             throw e;
-        } catch (final Exception e) {
+        } catch (final RuntimeException e) {
             final ErrorHandlerContext errorHandlerContext = new DefaultErrorHandlerContext(
                 null, // only required to pass for DeserializationExceptionHandler
                 internalProcessorContext.topic(),
@@ -213,9 +212,13 @@ public class ProcessorNode<KIn, VIn, KOut, VOut> {
                 internalProcessorContext.currentNode().name(),
                 internalProcessorContext.taskId());
 
-            final ProcessingExceptionHandler.ProcessingHandlerResponse response = processingExceptionHandler
-                .handle(errorHandlerContext, record, e);
+            final ProcessingExceptionHandler.ProcessingHandlerResponse response;
 
+            try {
+                response = processingExceptionHandler.handle(errorHandlerContext, record, e);
+            } catch (final Exception fatalUserException) {
+                throw new FailedProcessingException(fatalUserException);
+            }
             if (response == ProcessingExceptionHandler.ProcessingHandlerResponse.FAIL) {
                 log.error("Processing exception handler is set to fail upon" +
                      " a processing error. If you would rather have the streaming pipeline" +
@@ -226,10 +229,6 @@ public class ProcessorNode<KIn, VIn, KOut, VOut> {
                 droppedRecordsSensor.record();
             }
         }
-    }
-
-    public void punctuate(final long timestamp, final Punctuator punctuator) {
-        punctuator.punctuate(timestamp);
     }
 
     public boolean isTerminalNode() {

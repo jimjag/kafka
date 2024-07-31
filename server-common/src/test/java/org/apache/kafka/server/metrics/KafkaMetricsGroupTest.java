@@ -14,28 +14,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.kafka.server.metrics;
 
-package kafka.testkit;
+import com.yammer.metrics.core.MetricName;
 
-import org.apache.kafka.metadata.properties.MetaPropertiesEnsemble;
+import org.junit.jupiter.api.Test;
 
-import java.util.Map;
-import java.util.Set;
+import java.util.Collections;
 
-public interface TestKitNode {
-    default int id() {
-        return initialMetaPropertiesEnsemble().nodeId().getAsInt();
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+public class KafkaMetricsGroupTest {
+    @Test
+    public void testConstructorWithPackageAndSimpleName() {
+        String packageName = "testPackage";
+        String simpleName = "testSimple";
+        KafkaMetricsGroup group = new KafkaMetricsGroup(packageName, simpleName);
+        MetricName metricName = group.metricName("metric-name", Collections.emptyMap());
+        assertEquals(packageName, metricName.getGroup());
+        assertEquals(simpleName, metricName.getType());
     }
-
-    default String metadataDirectory() {
-        return initialMetaPropertiesEnsemble().metadataLogDir().get();
-    }
-
-    default Set<String> logDataDirectories() {
-        return initialMetaPropertiesEnsemble().logDirProps().keySet();
-    }
-
-    MetaPropertiesEnsemble initialMetaPropertiesEnsemble();
-
-    Map<String, String> propertyOverrides();
 }
