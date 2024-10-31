@@ -14,15 +14,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-package org.apache.kafka.controller;
+package org.apache.kafka.clients.consumer.internals.events;
 
 /**
- * The flags to use for a periodic task.
+ * Application event which is triggered as part of the consumer poll loop to update the pattern subscription
+ * if metadata changed.
  */
-enum PeriodicTaskFlag {
-    /**
-     * Set if we want to log the name and execution time on each run.
-     */
-    VERBOSE
+public class UpdatePatternSubscriptionEvent extends CompletableApplicationEvent<Void> {
+
+    public UpdatePatternSubscriptionEvent(final long deadlineMs) {
+        super(Type.UPDATE_SUBSCRIPTION_METADATA, deadlineMs);
+    }
 }
