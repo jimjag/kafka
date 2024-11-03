@@ -19,7 +19,9 @@ package org.apache.kafka.clients.admin;
 import org.apache.kafka.clients.admin.DescribeReplicaLogDirsResult.ReplicaLogDirInfo;
 import org.apache.kafka.clients.admin.internals.CoordinatorKey;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
+import org.apache.kafka.clients.consumer.internals.ConsumerProtocol;
 import org.apache.kafka.common.ElectionType;
+import org.apache.kafka.common.GroupType;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.Metric;
 import org.apache.kafka.common.MetricName;
@@ -127,7 +129,6 @@ public class MockAdminClient extends AdminClient {
         private Map<String, Short> maxSupportedFeatureLevels = Collections.emptyMap();
         private Map<String, String> defaultGroupConfigs = Collections.emptyMap();
 
-        @SuppressWarnings("this-escape")
         public Builder() {
             numBrokers(1);
         }
@@ -143,7 +144,7 @@ public class MockAdminClient extends AdminClient {
             return this;
         }
 
-        public Builder numBrokers(int numBrokers) {
+        public final Builder numBrokers(int numBrokers) {
             if (brokers.size() >= numBrokers) {
                 brokers = brokers.subList(0, numBrokers);
                 brokerLogDirs = brokerLogDirs.subList(0, numBrokers);
@@ -234,7 +235,6 @@ public class MockAdminClient extends AdminClient {
             Collections.emptyMap());
     }
 
-    @SuppressWarnings("this-escape")
     private MockAdminClient(
         List<Node> brokers,
         Node controller,
@@ -272,7 +272,7 @@ public class MockAdminClient extends AdminClient {
         this.maxSupportedFeatureLevels = new HashMap<>(maxSupportedFeatureLevels);
     }
 
-    public synchronized void controller(Node controller) {
+    public final synchronized void controller(Node controller) {
         if (!brokers.contains(controller))
             throw new IllegalArgumentException("The controller node must be in the list of brokers");
         this.controller = controller;
@@ -719,6 +719,13 @@ public class MockAdminClient extends AdminClient {
         }
 
         return new DescribeDelegationTokenResult(future);
+    }
+
+    @Override
+    public synchronized ListGroupsResult listGroups(ListGroupsOptions options) {
+        KafkaFutureImpl<Collection<Object>> future = new KafkaFutureImpl<>();
+        future.complete(groupConfigs.keySet().stream().map(g -> new GroupListing(g, Optional.of(GroupType.CONSUMER), ConsumerProtocol.PROTOCOL_TYPE)).collect(Collectors.toList()));
+        return new ListGroupsResult(future);
     }
 
     @Override
