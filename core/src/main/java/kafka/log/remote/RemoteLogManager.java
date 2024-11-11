@@ -19,10 +19,7 @@ package kafka.log.remote;
 import kafka.cluster.Partition;
 import kafka.log.AsyncOffsetReadFutureHolder;
 import kafka.log.UnifiedLog;
-import kafka.server.DelayedOperationPurgatory;
 import kafka.server.DelayedRemoteListOffsets;
-import kafka.server.StopPartition;
-import kafka.server.TopicPartitionOperationKey;
 
 import org.apache.kafka.common.Endpoint;
 import org.apache.kafka.common.KafkaException;
@@ -51,6 +48,7 @@ import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.server.common.CheckpointFile;
 import org.apache.kafka.server.common.OffsetAndEpoch;
+import org.apache.kafka.server.common.StopPartition;
 import org.apache.kafka.server.config.ServerConfigs;
 import org.apache.kafka.server.log.remote.metadata.storage.ClassLoaderAwareRemoteLogMetadataManager;
 import org.apache.kafka.server.log.remote.quota.RLMQuotaManager;
@@ -68,6 +66,8 @@ import org.apache.kafka.server.log.remote.storage.RemoteLogSegmentState;
 import org.apache.kafka.server.log.remote.storage.RemoteStorageException;
 import org.apache.kafka.server.log.remote.storage.RemoteStorageManager;
 import org.apache.kafka.server.metrics.KafkaMetricsGroup;
+import org.apache.kafka.server.purgatory.DelayedOperationPurgatory;
+import org.apache.kafka.server.purgatory.TopicPartitionOperationKey;
 import org.apache.kafka.server.quota.QuotaType;
 import org.apache.kafka.server.storage.log.FetchIsolation;
 import org.apache.kafka.storage.internals.checkpoint.LeaderEpochCheckpointFile;
@@ -486,8 +486,8 @@ public class RemoteLogManager implements Closeable {
 
     /**
      * Stop the remote-log-manager task for the given partitions. And, calls the
-     * {@link RemoteLogMetadataManager#onStopPartitions(Set)} when {@link StopPartition#deleteLocalLog()} is true.
-     * Deletes the partitions from the remote storage when {@link StopPartition#deleteRemoteLog()} is true.
+     * {@link RemoteLogMetadataManager#onStopPartitions(Set)} when {@link StopPartition#deleteLocalLog} is true.
+     * Deletes the partitions from the remote storage when {@link StopPartition#deleteRemoteLog} is true.
      *
      * @param stopPartitions topic partitions that needs to be stopped.
      * @param errorHandler   callback to handle any errors while stopping the partitions.
@@ -496,7 +496,7 @@ public class RemoteLogManager implements Closeable {
                                BiConsumer<TopicPartition, Throwable> errorHandler) {
         LOGGER.debug("Stop partitions: {}", stopPartitions);
         for (StopPartition stopPartition: stopPartitions) {
-            TopicPartition tp = stopPartition.topicPartition();
+            TopicPartition tp = stopPartition.topicPartition;
             try {
                 if (topicIdByPartitionMap.containsKey(tp)) {
                     TopicIdPartition tpId = new TopicIdPartition(topicIdByPartitionMap.get(tp), tp);
@@ -518,7 +518,7 @@ public class RemoteLogManager implements Closeable {
 
                     removeRemoteTopicPartitionMetrics(tpId);
 
-                    if (stopPartition.deleteRemoteLog()) {
+                    if (stopPartition.deleteRemoteLog) {
                         LOGGER.info("Deleting the remote log segments task for partition: {}", tpId);
                         deleteRemoteLogPartition(tpId);
                     }
@@ -535,8 +535,8 @@ public class RemoteLogManager implements Closeable {
         // in both case, they all mean the topic will not be held in this broker anymore.
         // NOTE: In ZK mode, this#stopPartitions method is called when Replica state changes to Offline and ReplicaDeletionStarted
         Set<TopicIdPartition> pendingActionsPartitions = stopPartitions.stream()
-                .filter(sp -> (sp.stopRemoteLogMetadataManager() || sp.deleteLocalLog()) && topicIdByPartitionMap.containsKey(sp.topicPartition()))
-                .map(sp -> new TopicIdPartition(topicIdByPartitionMap.get(sp.topicPartition()), sp.topicPartition()))
+                .filter(sp -> (sp.stopRemoteLogMetadataManager || sp.deleteLocalLog) && topicIdByPartitionMap.containsKey(sp.topicPartition))
+                .map(sp -> new TopicIdPartition(topicIdByPartitionMap.get(sp.topicPartition), sp.topicPartition))
                 .collect(Collectors.toSet());
 
         if (!pendingActionsPartitions.isEmpty()) {
@@ -584,11 +584,30 @@ public class RemoteLogManager implements Closeable {
                                                                             int epochForOffset,
                                                                             long offset) throws RemoteStorageException {
         Uuid topicId = topicIdByPartitionMap.get(topicPartition);
-
         if (topicId == null) {
             throw new KafkaException("No topic id registered for topic partition: " + topicPartition);
         }
         return remoteLogMetadataManager.remoteLogSegmentMetadata(new TopicIdPartition(topicId, topicPartition), epochForOffset, offset);
+    }
+
+    /**
+     * Returns the next segment that may contain the aborted transaction entries. The search ensures that the returned
+     * segment offsets are greater than or equal to the given offset and in the same epoch.
+     * @param topicPartition topic partition to search
+     * @param epochForOffset the epoch
+     * @param offset the offset
+     * @return The next segment that contains the transaction index in the same epoch.
+     * @throws RemoteStorageException If an error occurs while fetching the remote log segment metadata.
+     */
+    public Optional<RemoteLogSegmentMetadata> fetchNextSegmentWithTxnIndex(TopicPartition topicPartition,
+                                                                           int epochForOffset,
+                                                                           long offset) throws RemoteStorageException {
+        Uuid topicId = topicIdByPartitionMap.get(topicPartition);
+        if (topicId == null) {
+            throw new KafkaException("No topic id registered for topic partition: " + topicPartition);
+        }
+        TopicIdPartition tpId = new TopicIdPartition(topicId, topicPartition);
+        return remoteLogMetadataManager.nextSegmentWithTxnIndex(tpId, epochForOffset, offset);
     }
 
     Optional<FileRecords.TimestampAndOffset> lookupTimestamp(RemoteLogSegmentMetadata rlsMetadata, long timestamp, long startingOffset)
@@ -973,9 +992,10 @@ public class RemoteLogManager implements Closeable {
             Map<Integer, Long> segmentLeaderEpochs = new HashMap<>(epochEntries.size());
             epochEntries.forEach(entry -> segmentLeaderEpochs.put(entry.epoch, entry.startOffset));
 
+            boolean isTxnIdxEmpty = segment.txnIndex().isEmpty();
             RemoteLogSegmentMetadata copySegmentStartedRlsm = new RemoteLogSegmentMetadata(segmentId, segment.baseOffset(), endOffset,
                     segment.largestTimestamp(), brokerId, time.milliseconds(), segment.log().sizeInBytes(),
-                    segmentLeaderEpochs);
+                    segmentLeaderEpochs, isTxnIdxEmpty);
 
             remoteLogMetadataManager.addRemoteLogSegmentMetadata(copySegmentStartedRlsm).get();
 
@@ -1036,7 +1056,8 @@ public class RemoteLogManager implements Closeable {
             // Update the highest offset in remote storage for this partition's log so that the local log segments
             // are not deleted before they are copied to remote storage.
             log.updateHighestOffsetInRemoteStorage(endOffset);
-            logger.info("Copied {} to remote storage with segment-id: {}", logFileName, copySegmentFinishedRlsm.remoteLogSegmentId());
+            logger.info("Copied {} to remote storage with segment-id: {}",
+                    logFileName, copySegmentFinishedRlsm.remoteLogSegmentId());
 
             long bytesLag = log.onlyLocalLogSegmentsSize() - log.activeSegment().size();
             long segmentsLag = log.onlyLocalLogSegmentsCount() - 1;
@@ -1651,25 +1672,26 @@ public class RemoteLogManager implements Closeable {
         }
 
         RemoteLogSegmentMetadata remoteLogSegmentMetadata = rlsMetadataOptional.get();
+        EnrichedRecordBatch enrichedRecordBatch = new EnrichedRecordBatch(null, 0);
         InputStream remoteSegInputStream = null;
         try {
             int startPos = 0;
-            RecordBatch firstBatch = null;
-
             //  Iteration over multiple RemoteSegmentMetadata is required in case of log compaction.
             //  It may be possible the offset is log compacted in the current RemoteLogSegmentMetadata
             //  And we need to iterate over the next segment metadata to fetch messages higher than the given offset.
-            while (firstBatch == null && rlsMetadataOptional.isPresent()) {
+            while (enrichedRecordBatch.batch == null && rlsMetadataOptional.isPresent()) {
                 remoteLogSegmentMetadata = rlsMetadataOptional.get();
                 // Search forward for the position of the last offset that is greater than or equal to the target offset
                 startPos = lookupPositionForOffset(remoteLogSegmentMetadata, offset);
                 remoteSegInputStream = remoteLogStorageManager.fetchLogSegment(remoteLogSegmentMetadata, startPos);
                 RemoteLogInputStream remoteLogInputStream = getRemoteLogInputStream(remoteSegInputStream);
-                firstBatch = findFirstBatch(remoteLogInputStream, offset);
-                if (firstBatch == null) {
+                enrichedRecordBatch = findFirstBatch(remoteLogInputStream, offset);
+                if (enrichedRecordBatch.batch == null) {
+                    Utils.closeQuietly(remoteSegInputStream, "RemoteLogSegmentInputStream");
                     rlsMetadataOptional = findNextSegmentMetadata(rlsMetadataOptional.get(), logOptional.get().leaderEpochCache());
                 }
             }
+            RecordBatch firstBatch = enrichedRecordBatch.batch;
             if (firstBatch == null)
                 return new FetchDataInfo(new LogOffsetMetadata(offset), MemoryRecords.EMPTY, false,
                         includeAbortedTxns ? Optional.of(Collections.emptyList()) : Optional.empty());
@@ -1700,8 +1722,9 @@ public class RemoteLogManager implements Closeable {
             }
             buffer.flip();
 
+            startPos = startPos + enrichedRecordBatch.skippedBytes;
             FetchDataInfo fetchDataInfo = new FetchDataInfo(
-                    new LogOffsetMetadata(offset, remoteLogSegmentMetadata.startOffset(), startPos),
+                    new LogOffsetMetadata(firstBatch.baseOffset(), remoteLogSegmentMetadata.startOffset(), startPos),
                     MemoryRecords.readableRecords(buffer));
             if (includeAbortedTxns) {
                 fetchDataInfo = addAbortedTransactions(firstBatch.baseOffset(), remoteLogSegmentMetadata, fetchDataInfo, logOptional.get());
@@ -1709,7 +1732,9 @@ public class RemoteLogManager implements Closeable {
 
             return fetchDataInfo;
         } finally {
-            Utils.closeQuietly(remoteSegInputStream, "RemoteLogSegmentInputStream");
+            if (enrichedRecordBatch.batch != null) {
+                Utils.closeQuietly(remoteSegInputStream, "RemoteLogSegmentInputStream");
+            }
         }
     }
     // for testing
@@ -1740,7 +1765,10 @@ public class RemoteLogManager implements Closeable {
                 abortedTxns -> abortedTransactions.addAll(abortedTxns.stream()
                         .map(AbortedTxn::asAbortedTransaction).collect(Collectors.toList()));
 
+        long startTimeNs = time.nanoseconds();
         collectAbortedTransactions(startOffset, upperBoundOffset, segmentMetadata, accumulator, log);
+        LOGGER.debug("Time taken to collect: {} aborted transactions for {} in {} ns", abortedTransactions.size(),
+                segmentMetadata, time.nanoseconds() - startTimeNs);
 
         return new FetchDataInfo(fetchInfo.fetchOffsetMetadata,
                 fetchInfo.records,
@@ -1748,29 +1776,51 @@ public class RemoteLogManager implements Closeable {
                 Optional.of(abortedTransactions.isEmpty() ? Collections.emptyList() : new ArrayList<>(abortedTransactions)));
     }
 
+    /**
+     * Collects the aborted transaction entries from the current and subsequent segments until the upper bound offset.
+     * Note that the accumulated aborted transaction entries might contain duplicates as it collects the entries across
+     * segments. We are relying on the client to discard the duplicates.
+     * @param startOffset The start offset of the fetch request.
+     * @param upperBoundOffset The upper bound offset of the fetch request.
+     * @param segmentMetadata The current segment metadata.
+     * @param accumulator The accumulator to collect the aborted transactions.
+     * @param log The unified log instance.
+     * @throws RemoteStorageException If an error occurs while fetching the remote log segment metadata.
+     */
     private void collectAbortedTransactions(long startOffset,
                                             long upperBoundOffset,
                                             RemoteLogSegmentMetadata segmentMetadata,
                                             Consumer<List<AbortedTxn>> accumulator,
                                             UnifiedLog log) throws RemoteStorageException {
-        // Search in remote segments first.
-        Optional<RemoteLogSegmentMetadata> nextSegmentMetadataOpt = Optional.of(segmentMetadata);
-        while (nextSegmentMetadataOpt.isPresent()) {
-            Optional<TransactionIndex> txnIndexOpt = nextSegmentMetadataOpt.map(metadata -> indexCache.getIndexEntry(metadata).txnIndex());
+        TopicPartition tp = segmentMetadata.topicIdPartition().topicPartition();
+        boolean isSearchComplete = false;
+        LeaderEpochFileCache leaderEpochCache = log.leaderEpochCache().getOrElse(null);
+        Optional<RemoteLogSegmentMetadata> currentMetadataOpt = Optional.of(segmentMetadata);
+        while (!isSearchComplete && currentMetadataOpt.isPresent()) {
+            RemoteLogSegmentMetadata currentMetadata = currentMetadataOpt.get();
+            Optional<TransactionIndex> txnIndexOpt = getTransactionIndex(currentMetadata);
             if (txnIndexOpt.isPresent()) {
-                TxnIndexSearchResult searchResult = txnIndexOpt.get().collectAbortedTxns(startOffset, upperBoundOffset);
+                TransactionIndex txnIndex = txnIndexOpt.get();
+                TxnIndexSearchResult searchResult = txnIndex.collectAbortedTxns(startOffset, upperBoundOffset);
                 accumulator.accept(searchResult.abortedTransactions);
-                if (searchResult.isComplete) {
-                    // Return immediately when the search result is complete, it does not need to go through local log segments.
-                    return;
-                }
+                isSearchComplete = searchResult.isComplete;
             }
-
-            nextSegmentMetadataOpt = findNextSegmentMetadata(nextSegmentMetadataOpt.get(), log.leaderEpochCache());
+            if (!isSearchComplete) {
+                currentMetadataOpt = findNextSegmentWithTxnIndex(tp, currentMetadata.endOffset() + 1, leaderEpochCache);
+            }
         }
-
         // Search in local segments
-        collectAbortedTransactionInLocalSegments(startOffset, upperBoundOffset, accumulator, log.logSegments().iterator());
+        if (!isSearchComplete) {
+            collectAbortedTransactionInLocalSegments(startOffset, upperBoundOffset, accumulator, log.logSegments().iterator());
+        }
+    }
+
+    private Optional<TransactionIndex> getTransactionIndex(RemoteLogSegmentMetadata currentMetadata) {
+        return !currentMetadata.isTxnIdxEmpty() ?
+                // `ofNullable` is needed for backward compatibility for old events that were stored in the
+                // `__remote_log_metadata` topic. The old events will return the `txnIdxEmpty` as false, but the
+                // transaction index may not exist in the remote storage.
+                Optional.ofNullable(indexCache.getIndexEntry(currentMetadata).txnIndex()) : Optional.empty();
     }
 
     private void collectAbortedTransactionInLocalSegments(long startOffset,
@@ -1803,16 +1853,57 @@ public class RemoteLogManager implements Closeable {
                 : Optional.empty();
     }
 
+    /**
+     * Returns the next segment metadata that contains the aborted transaction entries from the given offset.
+     * Note that the search starts from the given (offset-for-epoch, offset) pair, when there are no segments contains
+     * the transaction index in that epoch, then it proceeds to the next epoch (next-epoch, epoch-start-offset)
+     * and the search ends when the segment metadata is found or the leader epoch cache is exhausted.
+     * Note that the returned segment metadata may or may not contain the transaction index.
+     * Visible for testing
+     * @param tp The topic partition.
+     * @param offset The offset to start the search.
+     * @param leaderEpochCache The leader epoch file cache, this could be null.
+     * @return The next segment metadata that contains the transaction index. The transaction index may or may not exist
+     * in that segment metadata which depends on the RLMM plugin implementation. The caller of this method should handle
+     * for both the cases.
+     * @throws RemoteStorageException If an error occurs while fetching the remote log segment metadata.
+     */
+    Optional<RemoteLogSegmentMetadata> findNextSegmentWithTxnIndex(TopicPartition tp,
+                                                                   long offset,
+                                                                   LeaderEpochFileCache leaderEpochCache) throws RemoteStorageException {
+        if (leaderEpochCache == null) {
+            return Optional.empty();
+        }
+        OptionalInt initialEpochOpt = leaderEpochCache.epochForOffset(offset);
+        if (initialEpochOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        int initialEpoch = initialEpochOpt.getAsInt();
+        for (EpochEntry epochEntry : leaderEpochCache.epochEntries()) {
+            if (epochEntry.epoch >= initialEpoch) {
+                long startOffset = Math.max(epochEntry.startOffset, offset);
+                Optional<RemoteLogSegmentMetadata> metadataOpt = fetchNextSegmentWithTxnIndex(tp, epochEntry.epoch, startOffset);
+                if (metadataOpt.isPresent()) {
+                    return metadataOpt;
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
     // Visible for testing
-    RecordBatch findFirstBatch(RemoteLogInputStream remoteLogInputStream, long offset) throws IOException {
-        RecordBatch nextBatch;
+    EnrichedRecordBatch findFirstBatch(RemoteLogInputStream remoteLogInputStream, long offset) throws IOException {
+        int skippedBytes = 0;
+        RecordBatch nextBatch = null;
         // Look for the batch which has the desired offset
         // We will always have a batch in that segment as it is a non-compacted topic.
         do {
+            if (nextBatch != null) {
+                skippedBytes += nextBatch.sizeInBytes();
+            }
             nextBatch = remoteLogInputStream.nextBatch();
         } while (nextBatch != null && nextBatch.lastOffset() < offset);
-
-        return nextBatch;
+        return new EnrichedRecordBatch(nextBatch, skippedBytes);
     }
 
     OffsetAndEpoch findHighestRemoteOffset(TopicIdPartition topicIdPartition, UnifiedLog log) throws RemoteStorageException {
@@ -2161,6 +2252,16 @@ public class RemoteLogManager implements Closeable {
                     "logSegment=" + logSegment +
                     ", nextSegmentOffset=" + nextSegmentOffset +
                     '}';
+        }
+    }
+
+    static class EnrichedRecordBatch {
+        private final RecordBatch batch;
+        private final int skippedBytes;
+
+        public EnrichedRecordBatch(RecordBatch batch, int skippedBytes) {
+            this.batch = batch;
+            this.skippedBytes = skippedBytes;
         }
     }
 }

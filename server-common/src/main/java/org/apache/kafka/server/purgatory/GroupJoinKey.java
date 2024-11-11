@@ -14,10 +14,36 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package kafka.server.share;
+package org.apache.kafka.server.purgatory;
+
+import java.util.Objects;
 
 /**
- * A key for delayed operations that fetch data for share consumers.
+ * Used by delayed-join operations
  */
-public interface DelayedShareFetchKey {
+public class GroupJoinKey implements DelayedOperationKey {
+
+    private final String groupId;
+
+    public GroupJoinKey(String groupId) {
+        this.groupId = groupId;
+    }
+
+    @Override
+    public String keyLabel() {
+        return "join-" + groupId;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        GroupJoinKey that = (GroupJoinKey) o;
+        return Objects.equals(groupId, that.groupId);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(groupId);
+    }
 }

@@ -73,9 +73,10 @@ import org.apache.kafka.server.ClientMetricsManager
 import org.apache.kafka.server.authorizer._
 import org.apache.kafka.server.common.{GroupVersion, MetadataVersion, RequestLocal, TransactionVersion}
 import org.apache.kafka.server.common.MetadataVersion.{IBP_0_11_0_IV0, IBP_2_3_IV0}
+import org.apache.kafka.server.purgatory.TopicPartitionOperationKey
 import org.apache.kafka.server.record.BrokerCompressionType
 import org.apache.kafka.server.share.context.ShareFetchContext
-import org.apache.kafka.server.share.ErroneousAndValidPartitionData
+import org.apache.kafka.server.share.{ErroneousAndValidPartitionData, SharePartitionKey}
 import org.apache.kafka.server.share.acknowledge.ShareAcknowledgementBatch
 import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, FetchPartitionData}
 import org.apache.kafka.storage.internals.log.AppendOrigin
@@ -417,7 +418,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       if (replicaManager.hasDelayedElectionOperations) {
         updateMetadataRequest.partitionStates.forEach { partitionState =>
           val tp = new TopicPartition(partitionState.topicName, partitionState.partitionIndex)
-          replicaManager.tryCompleteElection(TopicPartitionOperationKey(tp))
+          replicaManager.tryCompleteElection(new TopicPartitionOperationKey(tp))
         }
       }
       requestHelper.sendResponseExemptThrottle(request, new UpdateMetadataResponse(
@@ -1644,6 +1645,13 @@ class KafkaApis(val requestChannel: RequestChannel,
         if (shareCoordinator.isEmpty) {
           return (Errors.INVALID_REQUEST, Node.noNode)
         }
+        try {
+          SharePartitionKey.validate(key)
+        } catch {
+          case e: IllegalArgumentException =>
+            error(s"Share coordinator key is invalid", e)
+            (Errors.INVALID_REQUEST, Node.noNode())
+        }
       }
       val (partition, internalTopicName) = CoordinatorType.forId(keyType) match {
         case CoordinatorType.GROUP =>
@@ -1653,8 +1661,7 @@ class KafkaApis(val requestChannel: RequestChannel,
           (txnCoordinator.partitionFor(key), TRANSACTION_STATE_TOPIC_NAME)
 
         case CoordinatorType.SHARE =>
-          // None check already done above
-          (shareCoordinator.get.partitionFor(key), SHARE_GROUP_STATE_TOPIC_NAME)
+          (shareCoordinator.foreach(coordinator => coordinator.partitionFor(SharePartitionKey.getInstance(key))), SHARE_GROUP_STATE_TOPIC_NAME)
       }
 
       val topicMetadata = metadataCache.getTopicMetadata(Set(internalTopicName), request.context.listenerName)

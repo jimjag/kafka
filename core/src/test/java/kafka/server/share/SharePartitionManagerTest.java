@@ -17,7 +17,7 @@
 package kafka.server.share;
 
 import kafka.cluster.Partition;
-import kafka.server.DelayedOperationPurgatory;
+import kafka.log.OffsetResultHolder;
 import kafka.server.LogReadResult;
 import kafka.server.ReplicaManager;
 import kafka.server.ReplicaQuota;
@@ -43,6 +43,7 @@ import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.ObjectSerializationCache;
+import org.apache.kafka.common.record.FileRecords;
 import org.apache.kafka.common.record.MemoryRecords;
 import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.requests.ShareFetchRequest;
@@ -52,6 +53,8 @@ import org.apache.kafka.common.utils.ImplicitLinkedHashCollection;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.coordinator.group.GroupConfigManager;
+import org.apache.kafka.server.purgatory.DelayedOperationKey;
+import org.apache.kafka.server.purgatory.DelayedOperationPurgatory;
 import org.apache.kafka.server.share.CachedSharePartition;
 import org.apache.kafka.server.share.ErroneousAndValidPartitionData;
 import org.apache.kafka.server.share.SharePartitionKey;
@@ -59,6 +62,8 @@ import org.apache.kafka.server.share.acknowledge.ShareAcknowledgementBatch;
 import org.apache.kafka.server.share.context.FinalContext;
 import org.apache.kafka.server.share.context.ShareFetchContext;
 import org.apache.kafka.server.share.context.ShareSessionContext;
+import org.apache.kafka.server.share.fetch.DelayedShareFetchGroupKey;
+import org.apache.kafka.server.share.fetch.DelayedShareFetchKey;
 import org.apache.kafka.server.share.fetch.ShareAcquiredRecords;
 import org.apache.kafka.server.share.fetch.ShareFetchData;
 import org.apache.kafka.server.share.persister.NoOpShareStatePersister;
@@ -1037,6 +1042,8 @@ public class SharePartitionManagerTest {
         partitionMaxBytes.put(tp5, PARTITION_MAX_BYTES);
         partitionMaxBytes.put(tp6, PARTITION_MAX_BYTES);
 
+        mockFetchOffsetForTimestamp(mockReplicaManager);
+
         Time time = mock(Time.class);
         when(time.hiResClockMs()).thenReturn(0L).thenReturn(100L);
         Metrics metrics = new Metrics();
@@ -1106,6 +1113,9 @@ public class SharePartitionManagerTest {
         partitionMaxBytes.put(tp3, PARTITION_MAX_BYTES);
 
         final Time time = new MockTime(0, System.currentTimeMillis(), 0);
+
+        mockFetchOffsetForTimestamp(mockReplicaManager);
+
         DelayedOperationPurgatory<DelayedShareFetch> delayedShareFetchPurgatory = new DelayedOperationPurgatory<>(
             "TestShareFetch", mockTimer, mockReplicaManager.localBrokerId(),
             DELAYED_SHARE_FETCH_PURGATORY_PURGE_INTERVAL, true, true);
@@ -1229,6 +1239,8 @@ public class SharePartitionManagerTest {
         Uuid fooId = Uuid.randomUuid();
         TopicIdPartition tp0 = new TopicIdPartition(fooId, new TopicPartition("foo", 0));
         Map<TopicIdPartition, Integer> partitionMaxBytes = Collections.singletonMap(tp0, PARTITION_MAX_BYTES);
+
+        mockFetchOffsetForTimestamp(mockReplicaManager);
 
         DelayedOperationPurgatory<DelayedShareFetch> delayedShareFetchPurgatory = new DelayedOperationPurgatory<>(
             "TestShareFetch", mockTimer, mockReplicaManager.localBrokerId(),
@@ -1674,7 +1686,7 @@ public class SharePartitionManagerTest {
         when(sp2.maybeAcquireFetchLock()).thenReturn(true);
         when(sp2.canAcquireRecords()).thenReturn(false);
 
-        Set<Object> delayedShareFetchWatchKeys = new HashSet<>();
+        List<DelayedOperationKey> delayedShareFetchWatchKeys = new ArrayList<>();
         partitionMaxBytes.keySet().forEach(topicIdPartition -> delayedShareFetchWatchKeys.add(new DelayedShareFetchGroupKey(groupId, topicIdPartition.topicId(), topicIdPartition.partition())));
 
         SharePartitionManager sharePartitionManager = SharePartitionManagerBuilder.builder()
@@ -1693,8 +1705,7 @@ public class SharePartitionManagerTest {
             .withSharePartitions(sharePartitions)
             .build();
 
-        delayedShareFetchPurgatory.tryCompleteElseWatch(
-            delayedShareFetch, CollectionConverters.asScala(delayedShareFetchWatchKeys).toSeq());
+        delayedShareFetchPurgatory.tryCompleteElseWatch(delayedShareFetch, delayedShareFetchWatchKeys);
 
         // Since acquisition lock for sp1 and sp2 cannot be acquired, we should have 2 watched keys.
         assertEquals(2, delayedShareFetchPurgatory.watched());
@@ -1775,7 +1786,7 @@ public class SharePartitionManagerTest {
         when(sp3.maybeAcquireFetchLock()).thenReturn(true);
         when(sp3.canAcquireRecords()).thenReturn(false);
 
-        Set<Object> delayedShareFetchWatchKeys = new HashSet<>();
+        List<DelayedOperationKey> delayedShareFetchWatchKeys = new ArrayList<>();
         partitionMaxBytes.keySet().forEach(topicIdPartition -> delayedShareFetchWatchKeys.add(new DelayedShareFetchGroupKey(groupId, topicIdPartition.topicId(), topicIdPartition.partition())));
 
         SharePartitionManager sharePartitionManager = SharePartitionManagerBuilder.builder()
@@ -1795,8 +1806,7 @@ public class SharePartitionManagerTest {
             .withSharePartitions(sharePartitions)
             .build();
 
-        delayedShareFetchPurgatory.tryCompleteElseWatch(
-                delayedShareFetch, CollectionConverters.asScala(delayedShareFetchWatchKeys).toSeq());
+        delayedShareFetchPurgatory.tryCompleteElseWatch(delayedShareFetch, delayedShareFetchWatchKeys);
 
         // Since acquisition lock for sp1 and sp2 cannot be acquired, we should have 2 watched keys.
         assertEquals(2, delayedShareFetchPurgatory.watched());
@@ -1872,7 +1882,7 @@ public class SharePartitionManagerTest {
         when(sp2.maybeAcquireFetchLock()).thenReturn(true);
         when(sp2.canAcquireRecords()).thenReturn(false);
 
-        Set<Object> delayedShareFetchWatchKeys = new HashSet<>();
+        List<DelayedOperationKey> delayedShareFetchWatchKeys = new ArrayList<>();
         partitionMaxBytes.keySet().forEach(topicIdPartition -> delayedShareFetchWatchKeys.add(new DelayedShareFetchGroupKey(groupId, topicIdPartition.topicId(), topicIdPartition.partition())));
 
         SharePartitionManager sharePartitionManager = spy(SharePartitionManagerBuilder.builder()
@@ -1892,8 +1902,7 @@ public class SharePartitionManagerTest {
             .withSharePartitions(sharePartitions)
             .build();
 
-        delayedShareFetchPurgatory.tryCompleteElseWatch(
-                delayedShareFetch, CollectionConverters.asScala(delayedShareFetchWatchKeys).toSeq());
+        delayedShareFetchPurgatory.tryCompleteElseWatch(delayedShareFetch, delayedShareFetchWatchKeys);
 
         // Since acquisition lock for sp1 and sp2 cannot be acquired, we should have 2 watched keys.
         assertEquals(2, delayedShareFetchPurgatory.watched());
@@ -1977,7 +1986,7 @@ public class SharePartitionManagerTest {
         when(sp3.maybeAcquireFetchLock()).thenReturn(true);
         when(sp3.canAcquireRecords()).thenReturn(false);
 
-        Set<Object> delayedShareFetchWatchKeys = new HashSet<>();
+        List<DelayedOperationKey> delayedShareFetchWatchKeys = new ArrayList<>();
         partitionMaxBytes.keySet().forEach(topicIdPartition -> delayedShareFetchWatchKeys.add(new DelayedShareFetchGroupKey(groupId, topicIdPartition.topicId(), topicIdPartition.partition())));
 
         SharePartitionManager sharePartitionManager = spy(SharePartitionManagerBuilder.builder()
@@ -1998,8 +2007,7 @@ public class SharePartitionManagerTest {
             .withSharePartitions(sharePartitions)
             .build();
 
-        delayedShareFetchPurgatory.tryCompleteElseWatch(
-                delayedShareFetch, CollectionConverters.asScala(delayedShareFetchWatchKeys).toSeq());
+        delayedShareFetchPurgatory.tryCompleteElseWatch(delayedShareFetch, delayedShareFetchWatchKeys);
 
         // Since acquisition lock for sp1 and sp2 cannot be acquired, we should have 2 watched keys.
         assertEquals(2, delayedShareFetchPurgatory.watched());
@@ -2483,6 +2491,12 @@ public class SharePartitionManagerTest {
         });
     }
 
+    private void mockFetchOffsetForTimestamp(ReplicaManager replicaManager) {
+        FileRecords.TimestampAndOffset timestampAndOffset = new FileRecords.TimestampAndOffset(-1L, 0L, Optional.empty());
+        Mockito.doReturn(new OffsetResultHolder(Option.apply(timestampAndOffset), Option.empty())).
+            when(replicaManager).fetchOffsetForTimestamp(Mockito.any(TopicPartition.class), Mockito.anyLong(), Mockito.any(), Mockito.any(), Mockito.anyBoolean());
+    }
+
     static Seq<Tuple2<TopicIdPartition, LogReadResult>> buildLogReadResult(Set<TopicIdPartition> topicIdPartitions) {
         List<Tuple2<TopicIdPartition, LogReadResult>> logReadResults = new ArrayList<>();
         topicIdPartitions.forEach(topicIdPartition -> logReadResults.add(new Tuple2<>(topicIdPartition, new LogReadResult(
@@ -2504,13 +2518,16 @@ public class SharePartitionManagerTest {
                                                     DelayedOperationPurgatory<DelayedShareFetch> delayedShareFetchPurgatory) {
         doAnswer(invocationOnMock -> {
             Object[] args = invocationOnMock.getArguments();
-            delayedShareFetchPurgatory.checkAndComplete(args[0]);
+            DelayedShareFetchKey key = (DelayedShareFetchKey) args[0];
+            delayedShareFetchPurgatory.checkAndComplete(key);
             return null;
         }).when(replicaManager).completeDelayedShareFetchRequest(any(DelayedShareFetchKey.class));
 
         doAnswer(invocationOnMock -> {
             Object[] args = invocationOnMock.getArguments();
-            delayedShareFetchPurgatory.tryCompleteElseWatch((DelayedShareFetch) args[0], (Seq<Object>) args[1]);
+            DelayedShareFetch operation = (DelayedShareFetch) args[0];
+            List<DelayedOperationKey> keys = (List<DelayedOperationKey>) args[1];
+            delayedShareFetchPurgatory.tryCompleteElseWatch(operation, keys);
             return null;
         }).when(replicaManager).addDelayedShareFetchRequest(any(), any());
     }

@@ -14,22 +14,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package kafka.server.share;
-
-import kafka.server.DelayedOperationKey;
+package org.apache.kafka.server.share.fetch;
 
 import org.apache.kafka.common.Uuid;
 
 import java.util.Objects;
 
 /**
- * A key for delayed share fetch purgatory that refers to the topic partition.
+ * A key for delayed share fetch purgatory that refers to the share partition.
  */
-public class DelayedShareFetchPartitionKey implements  DelayedShareFetchKey, DelayedOperationKey {
+public class DelayedShareFetchGroupKey implements DelayedShareFetchKey {
+    private final String groupId;
     private final Uuid topicId;
     private final int partition;
 
-    public DelayedShareFetchPartitionKey(Uuid topicId, int partition) {
+    public DelayedShareFetchGroupKey(String groupId, Uuid topicId, int partition) {
+        this.groupId = groupId;
         this.topicId = topicId;
         this.partition = partition;
     }
@@ -38,23 +38,25 @@ public class DelayedShareFetchPartitionKey implements  DelayedShareFetchKey, Del
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        DelayedShareFetchPartitionKey that = (DelayedShareFetchPartitionKey) o;
-        return topicId.equals(that.topicId) && partition == that.partition;
+        DelayedShareFetchGroupKey that = (DelayedShareFetchGroupKey) o;
+        return topicId.equals(that.topicId) && partition == that.partition && groupId.equals(that.groupId);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(topicId, partition);
+        return Objects.hash(topicId, partition, groupId);
     }
 
     @Override
     public String toString() {
-        return "DelayedShareFetchPartitionKey(topicId=" + topicId +
-            ", partition=" + partition + ")";
+        return "DelayedShareFetchGroupKey(groupId=" + groupId +
+            ", topicId=" + topicId +
+            ", partition=" + partition +
+            ")";
     }
 
     @Override
     public String keyLabel() {
-        return String.format("topicId=%s, partition=%s", topicId, partition);
+        return String.format("groupId=%s, topicId=%s, partition=%s", groupId, topicId, partition);
     }
 }
