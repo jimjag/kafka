@@ -15,27 +15,15 @@
  * limitations under the License.
  */
 
-package org.apache.kafka.clients.admin;
-
-import java.util.List;
-import java.util.Map;
+package org.apache.kafka.streams.processor.api;
 
 /**
- * A new partition reassignment, which can be applied via {@link AdminClient#alterPartitionReassignments(Map, AlterPartitionReassignmentsOptions)}.
+ * Marker interface for classes implementing {@link FixedKeyProcessorSupplier}
+ * that have been wrapped via a {@link ProcessorWrapper}.
+ * <p>
+ * To convert a {@link FixedKeyProcessorSupplier} instance into a {@link WrappedFixedKeyProcessorSupplier},
+ * use the {@link ProcessorWrapper#asWrappedFixedKey(FixedKeyProcessorSupplier)} method
  */
-public class NewPartitionReassignment {
-    private final List<Integer> targetReplicas;
+public interface WrappedFixedKeyProcessorSupplier<KIn, VIn, VOut> extends FixedKeyProcessorSupplier<KIn, VIn, VOut> {
 
-    /**
-     * @throws IllegalArgumentException if no replicas are supplied
-     */
-    public NewPartitionReassignment(List<Integer> targetReplicas) {
-        if (targetReplicas == null || targetReplicas.isEmpty())
-            throw new IllegalArgumentException("Cannot create a new partition reassignment without any replicas");
-        this.targetReplicas = List.copyOf(targetReplicas);
-    }
-
-    public List<Integer> targetReplicas() {
-        return targetReplicas;
-    }
 }
