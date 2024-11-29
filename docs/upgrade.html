@@ -38,6 +38,12 @@
                         <li>The <code>bufferpool-wait-time-total</code>, <code>io-waittime-total</code>, and <code>iotime-total</code> metrics were removed.
                             Please use <code>bufferpool-wait-time-ns-total</code>, <code>io-wait-time-ns-total</code>, and <code>io-time-ns-total</code> metrics as replacements, respectively.
                         </li>
+                        <li>The <code>kafka.common.requests.DescribeLogDirsResponse.LogDirInfo</code> class was removed. Please use the <code>kafka.clients.admin.DescribeLogDirsResult.descriptions()</code> class
+                            and <code>kafka.clients.admin.DescribeLogDirsResult.allDescriptions()</code>instead.
+                        </li>
+                        <li>The <code>kafka.common.requests.DescribeLogDirsResponse.ReplicaInfo</code> class was removed. Please use the <code>kafka.clients.admin.DescribeLogDirsResult.descriptions()</code> class
+                            and <code>kafka.clients.admin.DescribeLogDirsResult.allDescriptions()</code>instead.
+                        </li>
                     </ul>
                 </li>
                 <li><b>Broker</b>
@@ -48,6 +54,10 @@
                         <li>
                             The <code>offsets.commit.required.acks</code> configuration was removed.
                             See <a href="https://cwiki.apache.org/confluence/x/9YobEg">KIP-1041</a> for details.
+                        </li>
+                        <li>The <code>log.message.timestamp.difference.max.ms</code> configuration was removed.
+                            Please use <code>log.message.timestamp.before.max.ms</code> and <code>log.message.timestamp.after.max.ms</code> instead.
+                            See <a href="https://cwiki.apache.org/confluence/display/KAFKA/KIP-937%3A+Improve+Message+Timestamp+Validation">KIP-937</a> for details.
                         </li>
                     </ul>
                 </li>
