@@ -107,7 +107,7 @@ import org.apache.kafka.raft.Batch;
 import org.apache.kafka.raft.OffsetAndEpoch;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
 import org.apache.kafka.server.common.EligibleLeaderReplicasVersion;
-import org.apache.kafka.server.common.Features;
+import org.apache.kafka.server.common.Feature;
 import org.apache.kafka.server.common.KRaftVersion;
 import org.apache.kafka.server.common.MetadataVersion;
 import org.apache.kafka.server.common.TopicIdPartition;
@@ -696,7 +696,7 @@ public class QuorumControllerTest {
             if (brokerMaxSupportedKraftVersion != 0) {
                 brokerFeatures.add(new BrokerRegistrationRequestData.Feature()
                     .setName(KRaftVersion.FEATURE_NAME)
-                    .setMinSupportedVersion(Features.KRAFT_VERSION.minimumProduction())
+                    .setMinSupportedVersion(Feature.KRAFT_VERSION.minimumProduction())
                     .setMaxSupportedVersion(brokerMaxSupportedKraftVersion));
             }
             BrokerRegistrationRequestData request = new BrokerRegistrationRequestData().
@@ -867,10 +867,10 @@ public class QuorumControllerTest {
                                 Arrays.asList(new CreatableReplicaAssignment().
                                     setPartitionIndex(0).
                                     setBrokerIds(Arrays.asList(0, 1, 2)),
-                                new CreatableReplicaAssignment().
-                                    setPartitionIndex(1).
-                                    setBrokerIds(Arrays.asList(1, 2, 0))).
-                                        iterator()))).iterator())),
+                                    new CreatableReplicaAssignment().
+                                        setPartitionIndex(1).
+                                        setBrokerIds(Arrays.asList(1, 2, 0))).
+                                            iterator()))).iterator())),
                 Collections.singleton("foo")).get();
             fooId = fooData.topics().find("foo").topicId();
             active.allocateProducerIds(ANONYMOUS_CONTEXT,
