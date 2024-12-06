@@ -521,6 +521,7 @@ public class GroupMetadataManager {
                 describedGroups.add(new ConsumerGroupDescribeResponseData.DescribedGroup()
                     .setGroupId(groupId)
                     .setErrorCode(Errors.GROUP_ID_NOT_FOUND.code())
+                    .setErrorMessage(exception.getMessage())
                 );
             }
         });
@@ -552,6 +553,7 @@ public class GroupMetadataManager {
                 describedGroups.add(new ShareGroupDescribeResponseData.DescribedGroup()
                     .setGroupId(groupId)
                     .setErrorCode(Errors.GROUP_ID_NOT_FOUND.code())
+                    .setErrorMessage(exception.getMessage())
                 );
             }
         });
@@ -562,12 +564,14 @@ public class GroupMetadataManager {
     /**
      * Handles a DescribeGroup request.
      *
+     * @param context           The request context.
      * @param groupIds          The IDs of the groups to describe.
      * @param committedOffset   A specified committed offset corresponding to this shard.
      *
      * @return A list containing the DescribeGroupsResponseData.DescribedGroup.
      */
     public List<DescribeGroupsResponseData.DescribedGroup> describeGroups(
+        RequestContext context,
         List<String> groupIds,
         long committedOffset
     ) {
@@ -603,10 +607,19 @@ public class GroupMetadataManager {
                     );
                 }
             } catch (GroupIdNotFoundException exception) {
-                describedGroups.add(new DescribeGroupsResponseData.DescribedGroup()
-                    .setGroupId(groupId)
-                    .setGroupState(DEAD.toString())
-                );
+                if (context.header.apiVersion() >= 6) {
+                    describedGroups.add(new DescribeGroupsResponseData.DescribedGroup()
+                        .setGroupId(groupId)
+                        .setGroupState(DEAD.toString())
+                        .setErrorCode(Errors.GROUP_ID_NOT_FOUND.code())
+                        .setErrorMessage(exception.getMessage())
+                    );
+                } else {
+                    describedGroups.add(new DescribeGroupsResponseData.DescribedGroup()
+                        .setGroupId(groupId)
+                        .setGroupState(DEAD.toString())
+                    );
+                }
             }
         });
         return describedGroups;
@@ -647,7 +660,7 @@ public class GroupMetadataManager {
             } else if (createIfNotExists && group.type() == CLASSIC && validateOnlineUpgrade((ClassicGroup) group)) {
                 return convertToConsumerGroup((ClassicGroup) group, records);
             } else {
-                throw new GroupIdNotFoundException(String.format("Group %s is not a consumer group", groupId));
+                throw new GroupIdNotFoundException(String.format("Group %s is not a consumer group.", groupId));
             }
         }
     }
@@ -670,7 +683,7 @@ public class GroupMetadataManager {
         if (group.type() == CONSUMER) {
             return (ConsumerGroup) group;
         } else {
-            throw new GroupIdNotFoundException(String.format("Group %s is not a consumer group", groupId));
+            throw new GroupIdNotFoundException(String.format("Group %s is not a consumer group.", groupId));
         }
     }
 
@@ -704,7 +717,7 @@ public class GroupMetadataManager {
         Group group = groups.get(groupId);
 
         if (group == null && !createIfNotExists) {
-            throw new GroupIdNotFoundException(String.format("Consumer group %s not found", groupId));
+            throw new GroupIdNotFoundException(String.format("Consumer group %s not found.", groupId));
         }
 
         if (group == null) {
@@ -1768,11 +1781,11 @@ public class GroupMetadataManager {
         // The assignment is only provided in the following cases:
         // 1. The member sent a full request. It does so when joining or rejoining the group with zero
         //    as the member epoch; or on any errors (e.g. timeout). We use all the non-optional fields
-        //    (rebalanceTimeoutMs, subscribedTopicNames and ownedTopicPartitions) to detect a full request
-        //    as those must be set in a full request.
+        //    (rebalanceTimeoutMs, (subscribedTopicNames or subscribedTopicRegex) and ownedTopicPartitions)
+        //    to detect a full request as those must be set in a full request.
         // 2. The member's assignment has been updated.
-        boolean isFullRequest = memberEpoch == 0 || (rebalanceTimeoutMs != -1 && subscribedTopicNames != null && ownedTopicPartitions != null);
-        if (isFullRequest || hasAssignedPartitionsChanged(member, updatedMember)) {
+        boolean isFullRequest = rebalanceTimeoutMs != -1 && (subscribedTopicNames != null || subscribedTopicRegex != null) && ownedTopicPartitions != null;
+        if (memberEpoch == 0 || isFullRequest || hasAssignedPartitionsChanged(member, updatedMember)) {
             response.setAssignment(createConsumerGroupResponseAssignment(updatedMember));
         }
 
