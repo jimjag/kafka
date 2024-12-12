@@ -77,7 +77,7 @@ import org.apache.kafka.common.utils.{ImplicitLinkedHashCollection, ProducerIdAn
 import org.apache.kafka.coordinator.group.GroupConfig.{CONSUMER_HEARTBEAT_INTERVAL_MS_CONFIG, CONSUMER_SESSION_TIMEOUT_MS_CONFIG, SHARE_AUTO_OFFSET_RESET_CONFIG, SHARE_HEARTBEAT_INTERVAL_MS_CONFIG, SHARE_RECORD_LOCK_DURATION_MS_CONFIG, SHARE_SESSION_TIMEOUT_MS_CONFIG}
 import org.apache.kafka.coordinator.group.modern.share.ShareGroupConfig
 import org.apache.kafka.coordinator.group.{GroupConfig, GroupCoordinator, GroupCoordinatorConfig}
-import org.apache.kafka.coordinator.share.{ShareCoordinator, ShareCoordinatorConfigTest}
+import org.apache.kafka.coordinator.share.{ShareCoordinator, ShareCoordinatorTestConfig}
 import org.apache.kafka.coordinator.transaction.TransactionLogConfig
 import org.apache.kafka.metadata.LeaderAndIsr
 import org.apache.kafka.network.metrics.{RequestChannelMetrics, RequestMetrics}
@@ -1871,6 +1871,7 @@ class KafkaApisTest extends Logging {
         15L,
         0.toShort,
         Map(invalidTopicPartition -> partitionOffsetCommitData).asJava,
+        true
       ).build()
       val request = buildRequest(offsetCommitRequest)
       when(clientRequestQuotaManager.maybeRecordAndGetThrottleTimeMs(any[RequestChannel.Request](),
@@ -2152,6 +2153,7 @@ class KafkaApisTest extends Logging {
       producerId,
       epoch,
       Map(topicPartition -> partitionOffsetCommitData).asJava,
+      version >= TxnOffsetCommitRequest.LAST_STABLE_VERSION_BEFORE_TRANSACTION_V2
     ).build(version)
     val request = buildRequest(offsetCommitRequest)
 
@@ -2299,6 +2301,7 @@ class KafkaApisTest extends Logging {
         ArgumentMatchers.eq(epoch),
         ArgumentMatchers.eq(Set(new TopicPartition(Topic.GROUP_METADATA_TOPIC_NAME, partition))),
         responseCallback.capture(),
+        ArgumentMatchers.eq(TransactionVersion.TV_0),
         ArgumentMatchers.eq(requestLocal)
       )).thenAnswer(_ => responseCallback.getValue.apply(Errors.PRODUCER_FENCED))
       val kafkaApis = createKafkaApis()
@@ -2357,6 +2360,7 @@ class KafkaApisTest extends Logging {
         ArgumentMatchers.eq(epoch),
         ArgumentMatchers.eq(Set(topicPartition)),
         responseCallback.capture(),
+        ArgumentMatchers.eq(TransactionVersion.TV_0),
         ArgumentMatchers.eq(requestLocal)
       )).thenAnswer(_ => responseCallback.getValue.apply(Errors.PRODUCER_FENCED))
       val kafkaApis = createKafkaApis()
@@ -2432,6 +2436,7 @@ class KafkaApisTest extends Logging {
       ArgumentMatchers.eq(epoch),
       ArgumentMatchers.eq(Set(tp0)),
       responseCallback.capture(),
+      any[TransactionVersion],
       ArgumentMatchers.eq(requestLocal)
     )).thenAnswer(_ => responseCallback.getValue.apply(Errors.NONE))
 
@@ -3719,7 +3724,8 @@ class KafkaApisTest extends Logging {
     val describeGroupsRequest = new DescribeGroupsRequestData().setGroups(List(
       "group-1",
       "group-2",
-      "group-3"
+      "group-3",
+      "group-4"
     ).asJava)
 
     val requestChannelRequest = buildRequest(new DescribeGroupsRequest.Builder(describeGroupsRequest).build())
@@ -3746,7 +3752,12 @@ class KafkaApisTest extends Logging {
         .setErrorCode(Errors.NOT_COORDINATOR.code),
       new DescribeGroupsResponseData.DescribedGroup()
         .setGroupId("group-3")
-        .setErrorCode(Errors.REQUEST_TIMED_OUT.code)
+        .setErrorCode(Errors.REQUEST_TIMED_OUT.code),
+      new DescribeGroupsResponseData.DescribedGroup()
+        .setGroupId("group-4")
+        .setGroupState("Dead")
+        .setErrorCode(Errors.GROUP_ID_NOT_FOUND.code)
+        .setErrorMessage("Group group-4 is not a classic group.")
     ).asJava
 
     future.complete(groupResults)
@@ -11691,7 +11702,7 @@ class KafkaApisTest extends Logging {
 
     val response = getReadShareGroupResponse(
       readRequestData,
-      config ++ ShareCoordinatorConfigTest.testConfigMap().asScala,
+      config ++ ShareCoordinatorTestConfig.testConfigMap().asScala,
       verifyNoErr = true,
       null,
       readStateResultData
@@ -11746,7 +11757,7 @@ class KafkaApisTest extends Logging {
 
     val response = getReadShareGroupResponse(
       readRequestData,
-      config ++ ShareCoordinatorConfigTest.testConfigMap().asScala,
+      config ++ ShareCoordinatorTestConfig.testConfigMap().asScala,
       verifyNoErr = false,
       authorizer,
       readStateResultData
@@ -11801,7 +11812,7 @@ class KafkaApisTest extends Logging {
 
     val response = getWriteShareGroupResponse(
       writeRequestData,
-      config ++ ShareCoordinatorConfigTest.testConfigMap().asScala,
+      config ++ ShareCoordinatorTestConfig.testConfigMap().asScala,
       verifyNoErr = true,
       null,
       writeStateResultData
@@ -11856,7 +11867,7 @@ class KafkaApisTest extends Logging {
 
     val response = getWriteShareGroupResponse(
       writeRequestData,
-      config ++ ShareCoordinatorConfigTest.testConfigMap().asScala,
+      config ++ ShareCoordinatorTestConfig.testConfigMap().asScala,
       verifyNoErr = false,
       authorizer,
       writeStateResultData

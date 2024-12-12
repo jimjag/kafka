@@ -50,7 +50,7 @@ ext {
   minClientJavaVersion = 11
   minNonClientJavaVersion = 17
   // The connect:api module also belongs to the clients module, but it has already been bumped to JDK 17 as part of KIP-1032.
-  modulesNeedingJava11 = [":clients", ":streams", ":streams:test-utils", ":streams-scala", ":test-common:test-common-runtime"]
+  modulesNeedingJava11 = [":clients", ":generator", ":streams", ":streams:test-utils", ":streams-scala", ":test-common:test-common-runtime"]
 
   buildVersionFileName = "kafka-version.properties"
 
@@ -124,13 +124,12 @@ ext {
     def releaseVersion = modulesNeedingJava11.any { projectPath == it } ? minClientJavaVersion : minNonClientJavaVersion
 
     options.compilerArgs << "-encoding" << "UTF-8"
-    options.compilerArgs += ["--release", String.valueOf(releaseVersion)]
+    options.release = releaseVersion
 
     if (name in ["compileTestJava", "compileTestScala"]) {
       options.compilerArgs << "-parameters"
     } else if (name in ["compileJava", "compileScala"]) {
-      if (!project.path.startsWith(":connect") && !project.path.startsWith(":storage"))
-        options.compilerArgs << "-Xlint:-rawtypes"
+      options.compilerArgs << "-Xlint:-rawtypes"
       options.compilerArgs << "-Xlint:all"
       options.compilerArgs << "-Xlint:-serial"
       options.compilerArgs << "-Xlint:-try"
@@ -201,6 +200,11 @@ allprojects {
     // Javadoc warnings should fail the build in JDK 15+ https://bugs.openjdk.org/browse/JDK-8200363
     options.addBooleanOption('Werror', JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_15))
     options.links "https://docs.oracle.com/en/java/javase/${JavaVersion.current().majorVersion}/docs/api/"
+  }
+
+  tasks.withType(Checkstyle) {
+    minHeapSize = "200m"
+    maxHeapSize = "1g"
   }
 
   clean {
@@ -546,6 +550,7 @@ subprojects {
   task quarantinedTest(type: Test, dependsOn: compileJava) {
     ext {
       isGithubActions = System.getenv('GITHUB_ACTIONS') != null
+      hadFailure = false  // Used to track if any tests failed, see afterSuite below
     }
 
     // Disable caching and up-to-date for this task. We always want quarantined tests
@@ -555,7 +560,7 @@ subprojects {
     outputs.cacheIf { false }
 
     maxParallelForks = maxTestForks
-    ignoreFailures = userIgnoreFailures
+    ignoreFailures = userIgnoreFailures || ext.isGithubActions
 
     maxHeapSize = defaultMaxHeapSize
     jvmArgs = defaultJvmArgs
@@ -584,6 +589,13 @@ subprojects {
       }
     }
 
+    // As we process results, check if there were any test failures.
+    afterSuite { desc, result ->
+      if (result.resultType == TestResult.ResultType.FAILURE) {
+        ext.hadFailure = true
+      }
+    }
+
     // This closure will copy JUnit XML files out of the sub-project's build directory and into
     // a top-level build/junit-xml directory. This is necessary to avoid reporting on tests which
     // were not run, but instead were restored via FROM-CACHE. See KAFKA-17479 for more details.
@@ -596,6 +608,11 @@ subprojects {
           ant.fileset(dir: "${quarantinedTest.reports.junitXml.entryPoint}") {
             ant.include(name: "**/*.xml")
           }
+        }
+        // If there were any test failures, we want to fail the task to prevent the failures
+        // from being cached.
+        if (ext.hadFailure) {
+          throw new GradleException("Failing this task since '${project.name}:${name}' had test failures.")
         }
       }
     }
@@ -1818,7 +1835,7 @@ project(':generator') {
     implementation libs.argparse4j
     implementation libs.jacksonDatabind
     implementation libs.jacksonJDK8Datatypes
-    implementation libs.jacksonJaxrsJsonProvider
+    implementation libs.jacksonJakartarsJsonProvider
 
     implementation 'org.eclipse.jgit:org.eclipse.jgit:6.4.0.202211300538-r'
     // SSH support for JGit based on Apache MINA sshd
@@ -1865,7 +1882,7 @@ project(':clients') {
     compileOnly libs.jose4j          // for SASL/OAUTHBEARER JWT validation; only used by broker
 
     testImplementation libs.bcpkix
-    testImplementation libs.jacksonJaxrsJsonProvider
+    testImplementation libs.jacksonJakartarsJsonProvider
     testImplementation libs.jose4j
     testImplementation libs.junitJupiter
     testImplementation libs.reload4j
@@ -2426,9 +2443,10 @@ project(':tools') {
     implementation libs.slf4jApi
     implementation libs.slf4jReload4j
     implementation libs.joptSimple
+    implementation libs.re2j
 
     implementation libs.jose4j                    // for SASL/OAUTHBEARER JWT validation
-    implementation libs.jacksonJaxrsJsonProvider
+    implementation libs.jacksonJakartarsJsonProvider
 
     testImplementation project(':clients')
     testImplementation project(':clients').sourceSets.test.output
@@ -2497,14 +2515,20 @@ project(':trogdor') {
     implementation libs.slf4jApi
     runtimeOnly libs.reload4j
 
-    implementation libs.jacksonJaxrsJsonProvider
+    implementation libs.jacksonJakartarsJsonProvider
     implementation libs.jerseyContainerServlet
     implementation libs.jerseyHk2
     implementation libs.jaxbApi // Jersey dependency that was available in the JDK before Java 9
     implementation libs.activation // Jersey dependency that was available in the JDK before Java 9
-    implementation libs.jettyServer
-    implementation libs.jettyServlet
-    implementation libs.jettyServlets
+    implementation (libs.jettyServer) {
+      exclude group: 'org.slf4j', module: 'slf4j-api'
+    }
+    implementation (libs.jettyServlet) {
+      exclude group: 'org.slf4j', module: 'slf4j-api'
+    }
+    implementation (libs.jettyServlets) {
+      exclude group: 'org.slf4j', module: 'slf4j-api'
+    }
 
     implementation project(':group-coordinator')
     implementation project(':group-coordinator:group-coordinator-api')
@@ -2554,7 +2578,7 @@ project(':shell') {
     implementation project(':raft')
 
     implementation libs.jose4j                    // for SASL/OAUTHBEARER JWT validation
-    implementation libs.jacksonJaxrsJsonProvider
+    implementation libs.jacksonJakartarsJsonProvider
 
     testImplementation project(':clients')
     testImplementation project(':clients').sourceSets.test.output
@@ -2708,9 +2732,6 @@ project(':streams') {
             ':streams:integration-tests',
             ':streams:test-utils:test',
             ':streams:streams-scala:test',
-            ':streams:upgrade-system-tests-0100:test',
-            ':streams:upgrade-system-tests-0101:test',
-            ':streams:upgrade-system-tests-0102:test',
             ':streams:upgrade-system-tests-0110:test',
             ':streams:upgrade-system-tests-10:test',
             ':streams:upgrade-system-tests-11:test',
@@ -2880,11 +2901,7 @@ project(':streams:examples') {
 
   dependencies {
     // this dependency should be removed after we unify data API
-    implementation(project(':connect:json')) {
-      // this transitive dependency is not used in Streams, and it breaks SBT builds
-      exclude module: 'javax.ws.rs-api'
-    }
-
+    implementation(project(':connect:json'))
     implementation project(':streams')
 
     implementation libs.slf4jReload4j
@@ -2911,57 +2928,6 @@ project(':streams:examples') {
 
   jar {
     dependsOn 'copyDependantLibs'
-  }
-}
-
-project(':streams:upgrade-system-tests-0100') {
-  base {
-    archivesName = "kafka-streams-upgrade-system-tests-0100"
-  }
-
-  dependencies {
-    testImplementation(libs.kafkaStreams_0100) {
-      exclude group: 'org.slf4j', module: 'slf4j-log4j12'
-      exclude group: 'log4j', module: 'log4j'
-    }
-    testRuntimeOnly libs.junitJupiter
-  }
-
-  systemTestLibs {
-    dependsOn testJar
-  }
-}
-
-project(':streams:upgrade-system-tests-0101') {
-  base {
-    archivesName = "kafka-streams-upgrade-system-tests-0101"
-  }
-
-  dependencies {
-    testImplementation(libs.kafkaStreams_0101) {
-      exclude group: 'org.slf4j', module: 'slf4j-log4j12'
-      exclude group: 'log4j', module: 'log4j'
-    }
-    testRuntimeOnly libs.junitJupiter
-  }
-
-  systemTestLibs {
-    dependsOn testJar
-  }
-}
-
-project(':streams:upgrade-system-tests-0102') {
-  base {
-    archivesName = "kafka-streams-upgrade-system-tests-0102"
-  }
-
-  dependencies {
-    testImplementation libs.kafkaStreams_0102
-    testRuntimeOnly libs.junitJupiter
-  }
-
-  systemTestLibs {
-    dependsOn testJar
   }
 }
 
@@ -3378,7 +3344,7 @@ project(':connect:api') {
     api project(':clients')
     implementation libs.slf4jApi
     runtimeOnly libs.reload4j
-    implementation libs.jaxrsApi
+    implementation libs.jakartaRsApi
 
     testImplementation libs.junitJupiter
     testImplementation project(':clients').sourceSets.test.output
@@ -3499,17 +3465,26 @@ project(':connect:runtime') {
 
     implementation libs.slf4jApi
     implementation libs.reload4j
+    implementation libs.slf4jReload4j
     implementation libs.jose4j                    // for SASL/OAUTHBEARER JWT validation
     implementation libs.jacksonAnnotations
-    implementation libs.jacksonJaxrsJsonProvider
+    implementation libs.jacksonJakartarsJsonProvider
     implementation libs.jerseyContainerServlet
     implementation libs.jerseyHk2
     implementation libs.jaxbApi // Jersey dependency that was available in the JDK before Java 9
     implementation libs.activation // Jersey dependency that was available in the JDK before Java 9
-    implementation libs.jettyServer
-    implementation libs.jettyServlet
-    implementation libs.jettyServlets
-    implementation libs.jettyClient
+    implementation (libs.jettyServer) {
+      exclude group: 'org.slf4j', module: 'slf4j-api'
+    }
+    implementation (libs.jettyServlet) {
+      exclude group: 'org.slf4j', module: 'slf4j-api'
+    }
+    implementation (libs.jettyServlets) {
+      exclude group: 'org.slf4j', module: 'slf4j-api'
+    }
+    implementation (libs.jettyClient) {
+      exclude group: 'org.slf4j', module: 'slf4j-api'
+    }
     implementation libs.classgraph
     implementation libs.mavenArtifact
     implementation libs.swaggerAnnotations
@@ -3672,7 +3647,7 @@ project(':connect:basic-auth-extension') {
     implementation project(':connect:api')
     implementation libs.slf4jApi
     runtimeOnly libs.reload4j
-    implementation libs.jaxrsApi
+    implementation libs.jakartaRsApi
     implementation libs.jaxAnnotationApi
 
     testImplementation libs.bcpkix
@@ -3718,15 +3693,23 @@ project(':connect:mirror') {
     implementation libs.slf4jApi
     runtimeOnly libs.reload4j
     implementation libs.jacksonAnnotations
-    implementation libs.jacksonJaxrsJsonProvider
+    implementation libs.jacksonJakartarsJsonProvider
     implementation libs.jerseyContainerServlet
     implementation libs.jerseyHk2
     implementation libs.jaxbApi // Jersey dependency that was available in the JDK before Java 9
     implementation libs.activation // Jersey dependency that was available in the JDK before Java 9
-    implementation libs.jettyServer
-    implementation libs.jettyServlet
-    implementation libs.jettyServlets
-    implementation libs.jettyClient
+    implementation (libs.jettyServer) {
+      exclude group: 'org.slf4j', module: 'slf4j-api'
+    }
+    implementation (libs.jettyServlet) {
+      exclude group: 'org.slf4j', module: 'slf4j-api'
+    }
+    implementation (libs.jettyServlets) {
+      exclude group: 'org.slf4j', module: 'slf4j-api'
+    }
+    implementation (libs.jettyClient) {
+      exclude group: 'org.slf4j', module: 'slf4j-api'
+    }
     implementation libs.swaggerAnnotations
 
     testImplementation libs.junitJupiter

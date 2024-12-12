@@ -18,7 +18,6 @@ package kafka.cluster
 
 import java.net.InetAddress
 import com.yammer.metrics.core.Metric
-import kafka.common.UnexpectedAppendOffsetException
 import kafka.log._
 import kafka.server._
 import kafka.utils._
@@ -60,7 +59,7 @@ import org.apache.kafka.server.common.MetadataVersion.IBP_2_6_IV0
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.server.purgatory.{DelayedOperationPurgatory, TopicPartitionOperationKey}
 import org.apache.kafka.server.share.fetch.DelayedShareFetchPartitionKey
-import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams}
+import org.apache.kafka.server.storage.log.{FetchIsolation, FetchParams, UnexpectedAppendOffsetException}
 import org.apache.kafka.server.util.{KafkaScheduler, MockTime}
 import org.apache.kafka.storage.internals.checkpoint.OffsetCheckpoints
 import org.apache.kafka.storage.internals.epoch.LeaderEpochFileCache
@@ -77,6 +76,7 @@ object PartitionTest {
     private var highWatermark: Long = -1L
     private var failed: Boolean = false
     private var deleted: Boolean = false
+    private var follower: Boolean = false
 
     override def onHighWatermarkUpdated(partition: TopicPartition, offset: Long): Unit = {
       highWatermark = offset
@@ -90,10 +90,15 @@ object PartitionTest {
       deleted = true
     }
 
+    override def onBecomingFollower(partition: TopicPartition): Unit = {
+      follower = true
+    }
+
     private def clear(): Unit = {
       highWatermark = -1L
       failed = false
       deleted = false
+      follower = false
     }
 
     /**
@@ -104,7 +109,8 @@ object PartitionTest {
     def verify(
       expectedHighWatermark: Long = -1L,
       expectedFailed: Boolean = false,
-      expectedDeleted: Boolean = false
+      expectedDeleted: Boolean = false,
+      expectedFollower: Boolean = false
     ): Unit = {
       assertEquals(expectedHighWatermark, highWatermark,
         "Unexpected high watermark")
@@ -112,6 +118,8 @@ object PartitionTest {
         "Unexpected failed")
       assertEquals(expectedDeleted, deleted,
         "Unexpected deleted")
+      assertEquals(expectedFollower, follower,
+        "Unexpected follower")
       clear()
     }
   }

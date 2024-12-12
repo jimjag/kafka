@@ -990,32 +990,37 @@ public class ShareConsumeRequestManager implements RequestManager, MemberStateLi
             }
 
             ShareAcknowledgeRequest.Builder requestBuilder = sessionHandler.newShareAcknowledgeBuilder(groupId, fetchConfig);
-            Node nodeToSend = metadata.fetch().nodeById(nodeId);
 
-            log.trace("Building acknowledgements to send : {}", finalAcknowledgementsToSend);
-            nodesWithPendingRequests.add(nodeId);
             isProcessed = false;
-
-            BiConsumer<ClientResponse, Throwable> responseHandler = (clientResponse, error) -> {
-                if (error != null) {
-                    handleShareAcknowledgeFailure(nodeToSend, requestBuilder.data(), this, error, clientResponse.receivedTimeMs());
-                } else {
-                    handleShareAcknowledgeSuccess(nodeToSend, requestBuilder.data(), this, clientResponse, clientResponse.receivedTimeMs());
-                }
-            };
+            Node nodeToSend = metadata.fetch().nodeById(nodeId);
 
             if (requestBuilder == null) {
                 handleSessionErrorCode(Errors.SHARE_SESSION_NOT_FOUND);
                 return null;
-            } else {
+            } else if (nodeToSend != null) {
+                nodesWithPendingRequests.add(nodeId);
+
+                log.trace("Building acknowledgements to send : {}", finalAcknowledgementsToSend);
+
                 inFlightAcknowledgements.putAll(finalAcknowledgementsToSend);
                 if (incompleteAcknowledgements.isEmpty()) {
                     acknowledgementsToSend.clear();
                 } else {
                     incompleteAcknowledgements.clear();
                 }
-                return new UnsentRequest(requestBuilder, Optional.of(nodeToSend)).whenComplete(responseHandler);
+
+                UnsentRequest unsentRequest = new UnsentRequest(requestBuilder, Optional.of(nodeToSend));
+                BiConsumer<ClientResponse, Throwable> responseHandler = (clientResponse, error) -> {
+                    if (error != null) {
+                        handleShareAcknowledgeFailure(nodeToSend, requestBuilder.data(), this, error, unsentRequest.handler().completionTimeMs());
+                    } else {
+                        handleShareAcknowledgeSuccess(nodeToSend, requestBuilder.data(), this, clientResponse, unsentRequest.handler().completionTimeMs());
+                    }
+                };
+                return unsentRequest.whenComplete(responseHandler);
             }
+
+            return null;
         }
 
         int getInFlightAcknowledgementsCount(TopicIdPartition tip) {
@@ -1081,12 +1086,16 @@ public class ShareConsumeRequestManager implements RequestManager, MemberStateLi
          * being sent.
          */
         void handleSessionErrorCode(Errors errorCode) {
-            inFlightAcknowledgements.forEach((tip, acks) -> {
+            Map<TopicIdPartition, Acknowledgements> acknowledgementsMapToClear =
+                    incompleteAcknowledgements.isEmpty() ? acknowledgementsToSend : incompleteAcknowledgements;
+
+            acknowledgementsMapToClear.forEach((tip, acks) -> {
                 if (acks != null) {
                     acks.setAcknowledgeErrorCode(errorCode);
                 }
                 resultHandler.complete(tip, acks, onCommitAsync());
             });
+            acknowledgementsMapToClear.clear();
             processingComplete();
         }
 

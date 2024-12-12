@@ -297,7 +297,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      */
     public KafkaProducer(Map<String, Object> configs, Serializer<K> keySerializer, Serializer<V> valueSerializer) {
         this(new ProducerConfig(ProducerConfig.appendSerializerToConfig(configs, keySerializer, valueSerializer)),
-                keySerializer, valueSerializer, null, null, null, Time.SYSTEM);
+                keySerializer, valueSerializer, null, null, null, new ApiVersions(), Time.SYSTEM);
     }
 
     /**
@@ -351,6 +351,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                   ProducerMetadata metadata,
                   KafkaClient kafkaClient,
                   ProducerInterceptors<K, V> interceptors,
+                  ApiVersions apiVersions,
                   Time time) {
         try {
             this.producerConfig = config;
@@ -423,7 +424,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             this.maxBlockTimeMs = config.getLong(ProducerConfig.MAX_BLOCK_MS_CONFIG);
             int deliveryTimeoutMs = configureDeliveryTimeout(config, log);
 
-            this.apiVersions = new ApiVersions();
+            this.apiVersions = apiVersions;
             this.transactionManager = configureTransactionState(config, logContext);
             // There is no need to do work required for adaptive partitioning, if we use a custom partitioner.
             boolean enableAdaptivePartitioning = partitioner == null &&
@@ -1218,11 +1219,19 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      * flush all buffered records before performing the commit. This ensures that all the {@link #send(ProducerRecord)}
      * calls made since the previous {@link #beginTransaction()} are completed before the commit.
      * </p>
+     * <p>
+     * <b>Important:</b> This method should not be used within the callback provided to
+     * {@link #send(ProducerRecord, Callback)}. Invoking <code>flush()</code> in this context will cause a deadlock.
+     * </p>
      *
      * @throws InterruptException If the thread is interrupted while blocked
      */
     @Override
     public void flush() {
+        if (Thread.currentThread() == this.ioThread) {
+            log.error("KafkaProducer.flush() invocation inside a callback will cause a deadlock.");
+        }
+
         log.trace("Flushing accumulated records in producer.");
 
         long start = time.nanoseconds();
@@ -1507,6 +1516,11 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     // Visible for testing
     String getClientId() {
         return clientId;
+    }
+
+    // Visible for testing
+    TransactionManager getTransactionManager() {
+        return transactionManager;
     }
 
     private static class ClusterAndWaitTime {

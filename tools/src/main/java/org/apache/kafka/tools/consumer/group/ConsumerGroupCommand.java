@@ -44,6 +44,7 @@ import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.errors.GroupIdNotFoundException;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.ListOffsetsResponse;
 import org.apache.kafka.common.utils.Utils;
@@ -52,6 +53,8 @@ import org.apache.kafka.server.util.CommandLineUtils;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.ObjectWriter;
+import com.google.re2j.Pattern;
+import com.google.re2j.PatternSyntaxException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -85,6 +88,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import joptsimple.OptionException;
+import joptsimple.OptionSpec;
 
 public class ConsumerGroupCommand {
     private static final Logger LOGGER = LoggerFactory.getLogger(ConsumerGroupCommand.class);
@@ -94,10 +98,27 @@ public class ConsumerGroupCommand {
     public static void main(String[] args) {
         ConsumerGroupCommandOptions opts = ConsumerGroupCommandOptions.fromArgs(args);
         try {
-            // should have exactly one action
-            long actions = Stream.of(opts.listOpt, opts.describeOpt, opts.deleteOpt, opts.resetOffsetsOpt, opts.deleteOffsetsOpt).filter(opts.options::has).count();
-            if (actions != 1)
-                CommandLineUtils.printUsageAndExit(opts.parser, "Command must include exactly one action: --list, --describe, --delete, --reset-offsets, --delete-offsets");
+            List<OptionSpec<?>> actions = List.of(
+                opts.listOpt,
+                opts.describeOpt,
+                opts.deleteOpt,
+                opts.resetOffsetsOpt,
+                opts.deleteOffsetsOpt,
+                opts.validateRegexOpt
+            );
+
+            // Should have exactly one action.
+            if (actions.stream().filter(opts.options::has).count() != 1) {
+                CommandLineUtils.printUsageAndExit(
+                    opts.parser,
+                    String.format(
+                        "Command must include exactly one action: %s",
+                        actions.stream().map(opt ->
+                            "--" + opt.options().get(0)
+                        ).collect(Collectors.joining(", "))
+                    )
+                );
+            }
 
             run(opts);
         } catch (OptionException e) {
@@ -106,6 +127,11 @@ public class ConsumerGroupCommand {
     }
 
     static void run(ConsumerGroupCommandOptions opts) {
+        if (opts.options.has(opts.validateRegexOpt)) {
+            validateRegex(opts.options.valueOf(opts.validateRegexOpt));
+            return;
+        }
+
         try (ConsumerGroupService consumerGroupService = new ConsumerGroupService(opts, Collections.emptyMap())) {
             if (opts.options.has(opts.listOpt))
                 consumerGroupService.listGroups();
@@ -127,6 +153,15 @@ public class ConsumerGroupCommand {
             CommandLineUtils.printUsageAndExit(opts.parser, e.getMessage());
         } catch (Throwable e) {
             printError("Executing consumer group command failed due to " + e.getMessage(), Optional.of(e));
+        }
+    }
+
+    static void validateRegex(String regex) {
+        try {
+            Pattern.compile(regex);
+            System.out.printf("The regular expression `%s` is valid.%n", regex);
+        } catch (PatternSyntaxException ex) {
+            System.out.printf("The regular expression `%s` is invalid: %s.%n", regex, ex.getDescription());
         }
     }
 
@@ -535,32 +570,52 @@ public class ConsumerGroupCommand {
                     switch (state) {
                         case "Empty":
                         case "Dead":
-                            Collection<TopicPartition> partitionsToReset = getPartitionsToReset(groupId);
-                            Map<TopicPartition, OffsetAndMetadata> preparedOffsets = prepareOffsetsToReset(groupId, partitionsToReset);
-
-                            // Dry-run is the default behavior if --execute is not specified
-                            boolean dryRun = opts.options.has(opts.dryRunOpt) || !opts.options.has(opts.executeOpt);
-                            if (!dryRun) {
-                                adminClient.alterConsumerGroupOffsets(
-                                    groupId,
-                                    preparedOffsets,
-                                    withTimeoutMs(new AlterConsumerGroupOffsetsOptions())
-                                ).all().get();
-                            }
-
-                            result.put(groupId, preparedOffsets);
-
+                            result.put(groupId, resetOffsetsForInactiveGroup(groupId));
                             break;
                         default:
                             printError("Assignments can only be reset if the group '" + groupId + "' is inactive, but the current state is " + state + ".", Optional.empty());
                             result.put(groupId, Collections.emptyMap());
                     }
-                } catch (InterruptedException | ExecutionException e) {
-                    throw new RuntimeException(e);
+                } catch (InterruptedException ie) {
+                    throw new RuntimeException(ie);
+                } catch (ExecutionException ee) {
+                    if (ee.getCause() instanceof GroupIdNotFoundException) {
+                        result.put(groupId, resetOffsetsForInactiveGroup(groupId));
+                    } else {
+                        throw new RuntimeException(ee);
+                    }
                 }
             });
 
             return result;
+        }
+
+        private Map<TopicPartition, OffsetAndMetadata> resetOffsetsForInactiveGroup(String groupId) {
+            try {
+                Collection<TopicPartition> partitionsToReset = getPartitionsToReset(groupId);
+                Map<TopicPartition, OffsetAndMetadata> preparedOffsets = prepareOffsetsToReset(groupId, partitionsToReset);
+
+                // Dry-run is the default behavior if --execute is not specified
+                boolean dryRun = opts.options.has(opts.dryRunOpt) || !opts.options.has(opts.executeOpt);
+                if (!dryRun) {
+                    adminClient.alterConsumerGroupOffsets(
+                        groupId,
+                        preparedOffsets,
+                        withTimeoutMs(new AlterConsumerGroupOffsetsOptions())
+                    ).all().get();
+                }
+
+                return preparedOffsets;
+            } catch (InterruptedException ie) {
+                throw new RuntimeException(ie);
+            } catch (ExecutionException ee) {
+                Throwable cause = ee.getCause();
+                if (cause instanceof KafkaException) {
+                    throw (KafkaException) cause;
+                } else {
+                    throw new RuntimeException(cause);
+                }
+            }
         }
 
         Entry<Errors, Map<TopicPartition, Throwable>> deleteOffsets(String groupId, List<String> topics) {
@@ -668,7 +723,7 @@ public class ConsumerGroupCommand {
                     System.out.printf(format,
                         tp.topic(),
                         tp.partition() >= 0 ? tp.partition() : "Not Provided",
-                        error != null ? "Error: :" + error.getMessage() : "Successful"
+                        error != null ? "Error: " + error.getMessage() : "Successful"
                     );
                 });
             System.out.println();
@@ -1197,8 +1252,10 @@ public class ConsumerGroupCommand {
                 try {
                     f.get();
                     success.put(g, null);
-                } catch (ExecutionException | InterruptedException e) {
-                    failed.put(g, e);
+                } catch (InterruptedException ie) {
+                    failed.put(g, ie);
+                } catch (ExecutionException e) {
+                    failed.put(g, e.getCause());
                 }
             });
 

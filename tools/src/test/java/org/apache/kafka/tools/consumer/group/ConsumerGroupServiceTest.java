@@ -32,6 +32,7 @@ import org.apache.kafka.clients.admin.TopicDescription;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.RangeAssignor;
 import org.apache.kafka.common.GroupState;
+import org.apache.kafka.common.GroupType;
 import org.apache.kafka.common.KafkaFuture;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
@@ -102,6 +103,7 @@ public class ConsumerGroupServiceTest {
     }
 
     @Test
+    @SuppressWarnings("deprecation")
     public void testAdminRequestsForDescribeNegativeOffsets() throws Exception {
         String[] args = new String[]{"--bootstrap-server", "localhost:9092", "--group", GROUP, "--describe", "--offsets"};
         ConsumerGroupCommand.ConsumerGroupService groupService = consumerGroupService(args);
@@ -139,8 +141,12 @@ public class ConsumerGroupServiceTest {
                 true,
                 Collections.singleton(new MemberDescription("member1", Optional.of("instance1"), "client1", "host1", new MemberAssignment(assignedTopicPartitions))),
                 RangeAssignor.class.getName(),
+                GroupType.CLASSIC,
                 GroupState.STABLE,
-                new Node(1, "localhost", 9092));
+                new Node(1, "localhost", 9092),
+                Set.of(),
+                Optional.empty(),
+                Optional.empty());
 
         Function<Collection<TopicPartition>, ArgumentMatcher<Map<TopicPartition, OffsetSpec>>> offsetsArgMatcher = expectedPartitions ->
                 topicPartitionOffsets -> topicPartitionOffsets != null && topicPartitionOffsets.keySet().equals(expectedPartitions);
@@ -227,14 +233,19 @@ public class ConsumerGroupServiceTest {
         };
     }
 
+    @SuppressWarnings("deprecation")
     private DescribeConsumerGroupsResult describeGroupsResult(GroupState groupState) {
         MemberDescription member1 = new MemberDescription("member1", Optional.of("instance1"), "client1", "host1", null);
         ConsumerGroupDescription description = new ConsumerGroupDescription(GROUP,
                 true,
                 Collections.singleton(member1),
                 RangeAssignor.class.getName(),
+                GroupType.CLASSIC,
                 groupState,
-                new Node(1, "localhost", 9092));
+                new Node(1, "localhost", 9092),
+                Set.of(),
+                Optional.empty(),
+                Optional.empty());
         KafkaFutureImpl<ConsumerGroupDescription> future = new KafkaFutureImpl<>();
         future.complete(description);
         return new DescribeConsumerGroupsResult(Collections.singletonMap(GROUP, future));
