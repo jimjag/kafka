@@ -3160,7 +3160,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       new KafkaPrincipal(entry.principalType, entry.principalName))
 
     // DelegationToken changes only need to be executed on the controller during migration
-    if (config.migrationEnabled && (!zkSupport.controller.isActive)) {
+    if (!zkSupport.controller.isActive) {
       requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
         CreateDelegationTokenResponse.prepareResponse(request.context.requestVersion, requestThrottleMs,
           Errors.NOT_CONTROLLER, owner, requester))
@@ -3204,7 +3204,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                .setExpiryTimestampMs(expiryTimestamp)))
     }
     // DelegationToken changes only need to be executed on the controller during migration
-    if (config.migrationEnabled && (!zkSupport.controller.isActive)) {
+    if (!zkSupport.controller.isActive) {
       requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
         new RenewDelegationTokenResponse(
           new RenewDelegationTokenResponseData()
@@ -3250,7 +3250,7 @@ class KafkaApis(val requestChannel: RequestChannel,
               .setExpiryTimestampMs(expiryTimestamp)))
     }
     // DelegationToken changes only need to be executed on the controller during migration
-    if (config.migrationEnabled && (!zkSupport.controller.isActive)) {
+    if (!zkSupport.controller.isActive) {
       requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
         new ExpireDelegationTokenResponse(
           new ExpireDelegationTokenResponseData()
@@ -3617,12 +3617,16 @@ class KafkaApis(val requestChannel: RequestChannel,
       clusterId,
       () => {
         val brokers = new DescribeClusterResponseData.DescribeClusterBrokerCollection()
-        metadataCache.getAliveBrokerNodes(request.context.listenerName).foreach { node =>
+        val describeClusterRequest = request.body[DescribeClusterRequest]
+        metadataCache.getBrokerNodes(request.context.listenerName).foreach { node =>
+          if (!node.isFenced || describeClusterRequest.data().includeFencedBrokers()) {
           brokers.add(new DescribeClusterResponseData.DescribeClusterBroker().
             setBrokerId(node.id).
             setHost(node.host).
             setPort(node.port).
-            setRack(node.rack))
+            setRack(node.rack).
+            setIsFenced(node.isFenced))
+          }
         }
         brokers
       },
