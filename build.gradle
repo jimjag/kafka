@@ -801,6 +801,11 @@ subprojects {
     scalaCompileOptions.additionalParameters += ["-Xfatal-warnings"]
     scalaCompileOptions.additionalParameters += ["--release", String.valueOf(releaseVersion)]
 
+    // Gradle does not support the `release` configuration when performing joint Java-Scala compilation.
+    // For more details, refer to https://github.com/gradle/gradle/issues/13762.
+    // As a result, we need to explicitly configure the Scala compiler with this setting.
+    options.compilerArgs += ["--release", String.valueOf(releaseVersion)]
+
     configureJavaCompiler(name, options, project.path)
 
     configure(scalaCompileOptions.forkOptions) {
@@ -3539,7 +3544,8 @@ project(':connect:runtime') {
 
     // We use this library to generate OpenAPI docs for the REST API, but we don't want or need it at compile
     // or run time. So, we add it to a separate configuration, which we use later on during docs generation
-    swagger libs.swaggerJaxrs2
+    swagger libs.jakartaServletApi
+    swagger libs.jaxrs2Jakarta
 
     testImplementation project(':clients').sourceSets.test.output
     testImplementation project(':core')
