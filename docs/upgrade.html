@@ -211,12 +211,34 @@
                             <code>DEAD</code> if the group ID was not found. In Apache Kafka 4.0, the <code>GroupIdNotFoundException</code>
                             is thrown instead as part of the support for new types of group.
                         </li>
-                        <li>The <code>org.apache.kafka.clients.admin.TopicListing.TopicListing(String, boolean)</code> method were removed.
+                        <li>The <code>org.apache.kafka.clients.admin.DeleteTopicsResult.values()</code> method was removed.
+                            Please use <code>org.apache.kafka.clients.admin.DeleteTopicsResult.topicNameValues()</code> instead.
+                        <li>The <code>org.apache.kafka.clients.admin.TopicListing.TopicListing(String, boolean)</code> method was removed.
                             Please use <code>org.apache.kafka.clients.admin.TopicListing.TopicListing(String, Uuid, boolean)</code> instead.
+                        </li>
+                        <li>The <code>org.apache.kafka.clients.admin.ListConsumerGroupOffsetsOptions.topicPartitions(List&lt;TopicPartition&gt;)</code> method was removed.
+                            Please use <code>org.apache.kafka.clients.admin.Admin.listConsumerGroupOffsets(Map&lt;String, ListConsumerGroupOffsetsSpec&gt;, ListConsumerGroupOffsetsOptions)</code> instead.
                         </li>
                         <li>
                             The deprecated <code>dryRun</code> methods were removed from the <code>org.apache.kafka.clients.admin.UpdateFeaturesOptions</code>.
                             Please use <code>validateOnly</code> instead.
+                        </li>
+                        <li>The constructor <code>org.apache.kafka.clients.admin.FeatureUpdate</code> with short and boolean arguments was removed.
+                            Please use the constructor that accepts short and the specified UpgradeType enum instead.
+                        </li>
+                        <li>
+                            The <code>allowDowngrade</code> method was removed from the <code>org.apache.kafka.clients.admin.FeatureUpdate</code>.
+                        </li>
+                        <li>The <code>org.apache.kafka.clients.admin.DescribeTopicsResult.DescribeTopicsResult(Map&lt;String, KafkaFuture&lt;TopicDescription&gt;&gt;)</code> method was removed.
+                            Please use <code>org.apache.kafka.clients.admin.DescribeTopicsResult.DescribeTopicsResult(Map&lt;Uuid, KafkaFuture&lt;TopicDescription&gt;&gt;, Map&lt;String, KafkaFuture&lt;TopicDescription&gt;&gt;)</code> instead.
+                        </li>
+                        <li>
+                            The <code>values()</code> method was removed from the <code>org.apache.kafka.clients.admin.DescribeTopicsResult</code>.
+                            Please use <code>topicNameValues()</code> instead.
+                        </li>
+                        <li>
+                            The <code>all()</code> method was removed from the <code>org.apache.kafka.clients.admin.DescribeTopicsResult</code>.
+                            Please use <code>allTopicNames()</code> instead.
                         </li>
                     </ul>
                 </li>
