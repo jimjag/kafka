@@ -39,6 +39,7 @@ import org.apache.kafka.common.message.AddPartitionsToTxnRequestData.{AddPartiti
 import org.apache.kafka.common.message.AddPartitionsToTxnResponseData.AddPartitionsToTxnResult
 import org.apache.kafka.common.message.AlterConfigsRequestData.{AlterConfigsResource => LAlterConfigsResource, AlterConfigsResourceCollection => LAlterConfigsResourceCollection, AlterableConfig => LAlterableConfig, AlterableConfigCollection => LAlterableConfigCollection}
 import org.apache.kafka.common.message.AlterConfigsResponseData.{AlterConfigsResourceResponse => LAlterConfigsResourceResponse}
+import org.apache.kafka.common.message.AlterShareGroupOffsetsRequestData.{AlterShareGroupOffsetsRequestPartition, AlterShareGroupOffsetsRequestTopic, AlterShareGroupOffsetsRequestTopicCollection}
 import org.apache.kafka.common.message.ApiMessageType.ListenerType
 import org.apache.kafka.common.message.ConsumerGroupDescribeResponseData.{DescribedGroup, TopicPartitions}
 import org.apache.kafka.common.message.CreateTopicsRequestData.CreatableTopic
@@ -4822,6 +4823,38 @@ class KafkaApisTest extends Logging {
     responseData = response.data()
 
     assertEquals(Errors.INVALID_SHARE_SESSION_EPOCH.code, responseData.errorCode)
+  }
+
+  @Test
+  def testHandleShareFetchRequestWhenShareSessionCacheIsFull(): Unit = {
+    val topicId = Uuid.randomUuid()
+    metadataCache = initializeMetadataCacheWithShareGroupsEnabled()
+    addTopicToMetadataCache("foo", 1, topicId = topicId)
+
+    when(sharePartitionManager.newContext(any(), any(), any(), any(), any(), any()))
+      .thenThrow(Errors.SHARE_SESSION_LIMIT_REACHED.exception)
+
+    when(sharePartitionManager.createIdleShareFetchTimerTask(anyLong()))
+      .thenReturn(CompletableFuture.completedFuture(null))
+
+    val shareFetchRequestData = new ShareFetchRequestData().
+      setGroupId("group").
+      setMemberId(Uuid.randomUuid.toString).
+      setShareSessionEpoch(0).
+      setTopics(util.List.of(new ShareFetchRequestData.FetchTopic().
+        setTopicId(topicId).
+        setPartitions(util.List.of(
+          new ShareFetchRequestData.FetchPartition()
+            .setPartitionIndex(0)))))
+
+    val shareFetchRequest = new ShareFetchRequest.Builder(shareFetchRequestData).build(ApiKeys.SHARE_FETCH.latestVersion)
+    val request = buildRequest(shareFetchRequest)
+    kafkaApis = createKafkaApis()
+    kafkaApis.handleShareFetchRequest(request)
+    val response = verifyNoThrottling[ShareFetchResponse](request)
+    val responseData = response.data()
+
+    assertEquals(Errors.SHARE_SESSION_LIMIT_REACHED.code, responseData.errorCode)
   }
 
   @Test
@@ -12910,6 +12943,39 @@ class KafkaApisTest extends Logging {
     response.data.results.forEach(deleteResult => {
       assertEquals(1, deleteResult.partitions.size)
       assertEquals(Errors.CLUSTER_AUTHORIZATION_FAILED.code(), deleteResult.partitions.get(0).errorCode())
+    })
+  }
+
+  @Test
+  def testAlterShareGroupOffsetsReturnsUnsupportedVersion(): Unit = {
+    val alterShareGroupOffsetsRequest = new AlterShareGroupOffsetsRequestData()
+      .setGroupId("group")
+      .setTopics(
+        new AlterShareGroupOffsetsRequestTopicCollection(
+          util.List.of(
+            new AlterShareGroupOffsetsRequestTopic()
+              .setTopicName("topic-1")
+              .setPartitions(util.List.of(
+                new AlterShareGroupOffsetsRequestPartition().setPartitionIndex(0).setStartOffset(0),
+                new AlterShareGroupOffsetsRequestPartition().setPartitionIndex(1).setStartOffset(0))
+              ),
+            new AlterShareGroupOffsetsRequestTopic()
+              .setTopicName("topic-2")
+              .setPartitions(util.List.of(
+                new AlterShareGroupOffsetsRequestPartition().setPartitionIndex(0).setStartOffset(0))
+              )
+          ).iterator()
+        )
+      )
+
+    val requestChannelRequest = buildRequest(new AlterShareGroupOffsetsRequest.Builder(alterShareGroupOffsetsRequest).build())
+    metadataCache = initializeMetadataCacheWithShareGroupsEnabled(enableShareGroups = false)
+    kafkaApis = createKafkaApis()
+    kafkaApis.handle(requestChannelRequest, RequestLocal.noCaching)
+
+    val response = verifyNoThrottling[AlterShareGroupOffsetsResponse](requestChannelRequest)
+    response.data.responses.forEach(topic => {
+      topic.partitions().forEach(partition => assertEquals(Errors.UNSUPPORTED_VERSION.code, partition.errorCode))
     })
   }
 

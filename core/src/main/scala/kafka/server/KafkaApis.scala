@@ -3102,6 +3102,17 @@ class KafkaApis(val requestChannel: RequestChannel,
       // Creating the shareFetchContext for Share Session Handling. if context creation fails, the request is failed directly here.
       shareFetchContext = sharePartitionManager.newContext(groupId, shareFetchData, forgottenTopics, newReqMetadata, isAcknowledgeDataPresent, request.context.connectionId)
     } catch {
+      case _: ShareSessionLimitReachedException =>
+        sharePartitionManager.createIdleShareFetchTimerTask(shareFetchRequest.maxWait).handle(
+          (_, exception) => {
+            if (exception != null) {
+              requestHelper.sendMaybeThrottle(request, shareFetchRequest.getErrorResponse(AbstractResponse.DEFAULT_THROTTLE_TIME, exception))
+            } else {
+              requestHelper.sendMaybeThrottle(request, shareFetchRequest.getErrorResponse(AbstractResponse.DEFAULT_THROTTLE_TIME, Errors.SHARE_SESSION_LIMIT_REACHED.exception))
+            }
+          }
+        )
+        return
       case e: Exception =>
         requestHelper.sendMaybeThrottle(request, shareFetchRequest.getErrorResponse(AbstractResponse.DEFAULT_THROTTLE_TIME, e))
         return
@@ -3450,6 +3461,8 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleInitializeShareGroupStateRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
     val initializeShareGroupStateRequest = request.body[InitializeShareGroupStateRequest]
+    // We do not need a check for isShareGroupProtocolEnabled in this RPC since there is a check for it in ShareFetch/ShareAcknowledge RPCs,
+    // hence requests won't reach Persister.
 
     if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
       requestHelper.sendMaybeThrottle(request, new InitializeShareGroupStateResponse(
@@ -3472,6 +3485,8 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleReadShareGroupStateRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
     val readShareGroupStateRequest = request.body[ReadShareGroupStateRequest]
+    // We do not need a check for isShareGroupProtocolEnabled in this RPC since there is a check for it in ShareFetch/ShareAcknowledge RPCs,
+    // hence requests won't reach Persister.
 
     if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
       requestHelper.sendMaybeThrottle(request, new ReadShareGroupStateResponse(
@@ -3494,6 +3509,8 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleWriteShareGroupStateRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
     val writeShareGroupStateRequest = request.body[WriteShareGroupStateRequest]
+    // We do not need a check for isShareGroupProtocolEnabled in this RPC since there is a check for it in ShareFetch/ShareAcknowledge RPCs,
+    // hence requests won't reach Persister.
 
     if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
       requestHelper.sendMaybeThrottle(request, new WriteShareGroupStateResponse(
@@ -3516,6 +3533,8 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleDeleteShareGroupStateRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
     val deleteShareGroupStateRequest = request.body[DeleteShareGroupStateRequest]
+    // We do not need a check for isShareGroupProtocolEnabled in this RPC since there is a check for it in ShareFetch/ShareAcknowledge RPCs,
+    // hence requests won't reach Persister.
 
     if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
       requestHelper.sendMaybeThrottle(request, new DeleteShareGroupStateResponse(
@@ -3538,6 +3557,8 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleReadShareGroupStateSummaryRequest(request: RequestChannel.Request): CompletableFuture[Unit] = {
     val readShareGroupStateSummaryRequest = request.body[ReadShareGroupStateSummaryRequest]
+    // We do not need a check for isShareGroupProtocolEnabled in this RPC since there is a check for it in ShareFetch/ShareAcknowledge RPCs,
+    // hence requests won't reach Persister.
 
     if (!authorizeClusterOperation(request, CLUSTER_ACTION)) {
       requestHelper.sendMaybeThrottle(request, new ReadShareGroupStateSummaryResponse(
@@ -3673,6 +3694,10 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   def handleAlterShareGroupOffsetsRequest(request: RequestChannel.Request): Unit = {
     val alterShareGroupOffsetsRequest = request.body[AlterShareGroupOffsetsRequest]
+    if (!isShareGroupProtocolEnabled) {
+      requestHelper.sendMaybeThrottle(request, alterShareGroupOffsetsRequest.getErrorResponse(AbstractResponse.DEFAULT_THROTTLE_TIME, Errors.UNSUPPORTED_VERSION.exception))
+      return
+    }
     requestHelper.sendMaybeThrottle(request, alterShareGroupOffsetsRequest.getErrorResponse(Errors.UNSUPPORTED_VERSION.exception))
     CompletableFuture.completedFuture[Unit](())
   }
