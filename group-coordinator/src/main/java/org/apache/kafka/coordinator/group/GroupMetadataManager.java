@@ -1355,7 +1355,8 @@ public class GroupMetadataManager {
                 snapshotRegistry,
                 metrics,
                 classicGroup,
-                metadataImage.topics()
+                metadataImage.topics(),
+                metadataImage.cluster()
             );
         } catch (SchemaException e) {
             log.warn("Cannot upgrade classic group " + classicGroup.groupId() +
@@ -8108,10 +8109,11 @@ public class GroupMetadataManager {
         AlterShareGroupOffsetsRequestData alterShareGroupOffsetsRequest,
         List<CoordinatorRecord> records
     ) {
+        final long currentTimeMs = time.milliseconds();
         Group group = groups.get(groupId);
         List<AlterShareGroupOffsetsResponseData.AlterShareGroupOffsetsResponseTopic> alterShareGroupOffsetsResponseTopics = new ArrayList<>();
 
-        Map<Uuid, Set<Integer>> initializingTopics = new HashMap<>();
+        Map<Uuid, InitMapValue> initializingTopics = new HashMap<>();
         Map<Uuid, Map<Integer, Long>> offsetByTopicPartitions = new HashMap<>();
 
         alterShareGroupOffsetsRequest.topics().forEach(topic -> {
@@ -8136,10 +8138,14 @@ public class GroupMetadataManager {
                     }
                 });
 
-                initializingTopics.put(topicId, topic.partitions().stream()
-                    .map(AlterShareGroupOffsetsRequestData.AlterShareGroupOffsetsRequestPartition::partitionIndex)
-                    .filter(existingPartitions::contains)
-                    .collect(Collectors.toSet()));
+                initializingTopics.put(topicId, new InitMapValue(
+                    topic.topicName(),
+                    topic.partitions().stream()
+                        .map(AlterShareGroupOffsetsRequestData.AlterShareGroupOffsetsRequestPartition::partitionIndex)
+                        .filter(existingPartitions::contains)
+                        .collect(Collectors.toSet()),
+                    currentTimeMs
+                ));
 
                 alterShareGroupOffsetsResponseTopics.add(
                     new AlterShareGroupOffsetsResponseData.AlterShareGroupOffsetsResponseTopic()
