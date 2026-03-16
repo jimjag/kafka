@@ -1,11 +1,8 @@
 ---
-title: Consumer and Share Consumer Configs
-description: Consumer and Share Consumer Configs
-weight: 5
-tags: ['kafka', 'docs']
-aliases: 
-keywords: 
-type: docs
+title: "Documentation Redirect"
+robots: "noindex"
+_build:
+  list: false
 ---
 
 <!--
@@ -26,4 +23,4 @@ type: docs
 -->
 
 
-Below is the consumer and share consumer configuration: {{< include-html file="/static/{version}/generated/consumer_config.html" >}} 
+{{< doc-redirect >}}
