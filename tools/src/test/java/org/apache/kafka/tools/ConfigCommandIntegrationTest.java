@@ -436,6 +436,40 @@ public class ConfigCommandIntegrationTest {
 
     }
 
+    @ClusterTest
+    public void testAlterStreamsGroupNumWarmupReplicas() {
+        // Verify the initial config
+        Stream<String> command = Stream.concat(quorumArgs(), Stream.of(
+            "--entity-type", "groups",
+            "--entity-name", "group",
+            "--describe", "--all"));
+        String message = captureStandardOut(run(command));
+        assertTrue(message.contains("streams.num.warmup.replicas=2"));
+
+        // Alter num warmup replicas
+        command = Stream.concat(quorumArgs(), Stream.of(
+            "--entity-type", "groups",
+            "--entity-name", "group",
+            "--alter", "--add-config", "streams.num.warmup.replicas=5"));
+        message = captureStandardOut(run(command));
+        assertEquals("Completed updating config for group group.", message);
+
+        // Verify the updated config
+        command = Stream.concat(quorumArgs(), Stream.of(
+            "--entity-type", "groups",
+            "--describe"));
+        message = captureStandardOut(run(command));
+        assertTrue(message.contains("streams.num.warmup.replicas=5"));
+
+        // Should fail to set above max
+        command = Stream.concat(quorumArgs(), Stream.of(
+            "--entity-type", "groups",
+            "--entity-name", "group",
+            "--alter", "--add-config", "streams.num.warmup.replicas=25"));
+        message = captureStandardErr(run(command));
+        assertTrue(message.contains("streams.num.warmup.replicas must be less than or equal to group.streams.max.warmup.replicas"));
+    }
+
     private void verifyGroupConfigUpdate(List<String> alterOpts) throws Exception {
         try (Admin client = cluster.admin()) {
             // Add config
@@ -641,6 +675,49 @@ public class ConfigCommandIntegrationTest {
                 List.of("--bootstrap-server", cluster.bootstrapServers(),
                     "--entity-type", "brokers", "--entity-default",
                     "--alter", "--delete-config", "non.existent.config"))));
+        }
+    }
+
+    @ClusterTest
+    public void testDeleteNonExistentConfigIsIdempotentWithBootstrapController() throws Exception {
+        String topicName = "test-delete-nonexistent-topic";
+        try (Admin bootstrapControllerClient = cluster.admin(Map.of(), true);
+             Admin bootstrapServerClient = cluster.admin(Map.of())) {
+            bootstrapServerClient.createTopics(List.of(new NewTopic(topicName, 1, (short) 1))).all().get();
+            ConfigCommand.alterConfig(bootstrapControllerClient, new ConfigCommand.ConfigCommandOptions(toArray(
+                List.of("--bootstrap-controller", cluster.bootstrapControllers(),
+                    "--entity-type", "topics", "--entity-name", topicName,
+                    "--alter", "--delete-config", "non.existent.config"))));
+
+            ConfigCommand.alterConfig(bootstrapControllerClient, new ConfigCommand.ConfigCommandOptions(toArray(
+                List.of("--bootstrap-controller", cluster.bootstrapControllers(),
+                    "--entity-type", "brokers", "--entity-name", defaultBrokerId,
+                    "--alter", "--delete-config", "non.existent.config"))));
+
+            ConfigCommand.alterConfig(bootstrapControllerClient, new ConfigCommand.ConfigCommandOptions(toArray(
+                List.of("--bootstrap-controller", cluster.bootstrapControllers(),
+                    "--entity-type", "brokers", "--entity-default",
+                    "--alter", "--delete-config", "non.existent.config"))));
+        }
+    }
+
+    @ClusterTest(brokers = 2)
+    public void testAlterBrokerConfigWithOfflineBroker() throws Exception {
+        int offlineBrokerId = cluster.brokerIds().stream()
+            .filter(id -> !cluster.controllerIds().contains(id))
+            .findFirst()
+            .orElseThrow();
+        cluster.shutdownBroker(offlineBrokerId);
+        TestUtils.waitForCondition(
+            () -> !cluster.aliveBrokers().containsKey(offlineBrokerId),
+            "Broker " + offlineBrokerId + " did not shut down in time"
+        );
+
+        try (Admin client = cluster.admin(Map.of(), true)) {
+            ConfigCommand.alterConfig(client, new ConfigCommand.ConfigCommandOptions(toArray(
+                List.of("--bootstrap-controller", cluster.bootstrapControllers(),
+                    "--entity-type", "brokers", "--entity-name", String.valueOf(offlineBrokerId),
+                    "--alter", "--delete-config", "log.retention.ms"))));
         }
     }
 
