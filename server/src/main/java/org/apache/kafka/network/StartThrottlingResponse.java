@@ -14,23 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.coordinator.group.streams.assignor;
+package org.apache.kafka.network;
 
-import java.util.Map;
+public record StartThrottlingResponse(Request request) implements Response {
 
-/**
- * The group metadata specifications required to compute the target assignment.
- */
-public interface GroupSpec {
-
-    /**
-     * @return Member metadata keyed by member Id.
-     */
-    Map<String, AssignmentMemberSpec> members();
-
-    /**
-     * @return Any configurations passed to the assignor.
-     */
-    Map<String, String> assignmentConfigs();
-
+    @Override
+    public String toString() {
+        return "Response(type=StartThrottling, request=" + request + ")";
+    }
 }

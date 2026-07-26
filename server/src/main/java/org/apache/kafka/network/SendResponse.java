@@ -14,20 +14,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.coordinator.group.streams.assignor;
+package org.apache.kafka.network;
 
-import org.apache.kafka.common.errors.ApiException;
+import org.apache.kafka.common.network.Send;
+
+import com.fasterxml.jackson.databind.JsonNode;
+
+import java.util.Optional;
 
 /**
- * Exception thrown by {@link TaskAssignor#assign(GroupSpec, TopologyDescriber)}}. The exception is only used internally.
+ * @param responseLog should only be defined if request logging is enabled
  */
-public class TaskAssignorException extends ApiException {
+public record SendResponse(Request request, Send responseSend, Optional<JsonNode> responseLog) implements Response {
 
-    public TaskAssignorException(String message) {
-        super(message);
-    }
-
-    public TaskAssignorException(String message, Throwable cause) {
-        super(message, cause);
+    @Override
+    public String toString() {
+        return "Response(type=Send, request=" + request + ", send=" + responseSend + ", asString=" + responseLog + ")";
     }
 }

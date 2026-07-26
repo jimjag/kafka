@@ -14,30 +14,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.coordinator.group.streams.assignor;
+package org.apache.kafka.network;
 
-/**
- * Server side task assignor used by streams groups.
- */
-public interface TaskAssignor {
+public record CloseConnectionResponse(Request request) implements Response {
 
-    /**
-     * Unique name for this assignor.
-     */
-    String name();
-
-    /**
-     * Assigns tasks to group members based on the given assignment specification and topic metadata.
-     *
-     * @param groupSpec         The assignment spec which includes member metadata.
-     * @param topologyDescriber The task metadata describer.
-     * @return The new assignment for the group.
-     *
-     * @throws TaskAssignorException For empty groups
-     */
-    GroupAssignment assign(
-        GroupSpec groupSpec,
-        TopologyDescriber topologyDescriber
-    ) throws TaskAssignorException;
-
+    @Override
+    public String toString() {
+        return "Response(type=CloseConnection, request=" + request + ")";
+    }
 }
