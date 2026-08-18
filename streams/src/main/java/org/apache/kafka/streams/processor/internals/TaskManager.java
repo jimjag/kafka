@@ -93,6 +93,7 @@ public class TaskManager {
     private final Admin adminClient;
     private final StateDirectory stateDirectory;
     private final ProcessingMode processingMode;
+    private final boolean streamsProtocolEnabled;
     private final ChangelogReader changelogReader;
     private final TopologyMetadata topologyMetadata;
 
@@ -141,6 +142,7 @@ public class TaskManager {
         this.activeTaskCreator = activeTaskCreator;
         this.standbyTaskCreator = standbyTaskCreator;
         this.processingMode = topologyMetadata.processingMode();
+        this.streamsProtocolEnabled = topologyMetadata.streamsProtocolEnabled();
 
         final LogContext logContext = new LogContext(logPrefix);
         this.log = logContext.logger(getClass());
@@ -1291,8 +1293,15 @@ public class TaskManager {
      * For all other assigned tasks this thread owns, we overwrite the (potentially) state offset-sum from the
      * state directory with the latest changelog offset information. This step also add offset-sums for in-memory
      * state stores.
+     *
+     * <p>No-op under the classic protocol, which reports offset sums through {@link #taskOffsetSums()} instead and
+     * never reads this snapshot.
      */
     public void maybeUpdateTaskOffsetSumSnapshot() {
+        if (!streamsProtocolEnabled) {
+            return;
+        }
+
         final Map<TaskId, Long> offsetSums = new HashMap<>(stateDirectory.taskOffsetSums());
         for (final Task task : allTasks().values()) {
             if (task.isActive() && task.state() == State.RUNNING) {
@@ -1539,14 +1548,9 @@ public class TaskManager {
         for (final Task task : tasksToCloseDirty) {
             closeTaskDirty(task, false);
         }
-        // Handling all failures that occurred during the remove process
-        for (final StateUpdater.ExceptionAndTask exceptionAndTask : stateUpdater.drainExceptionsAndFailedTasks()) {
-            final Task failedTask = exceptionAndTask.task();
-            closeTaskDirty(failedTask, false);
-        }
-
-        // If there is anything left unhandled due to timeouts, handling now
-        for (final Task task : stateUpdater.tasks()) {
+        // Closing everything that is still left in the queues of the state updater, i.e., tasks that failed during
+        // the removals above and tasks that the state updater never got to hand over or pick up
+        for (final Task task : stateUpdater.drainQueuedTasks()) {
             closeTaskDirty(task, false);
         }
     }
