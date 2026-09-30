@@ -13506,37 +13506,39 @@ public class GroupMetadataManagerTest {
             .setAssignedPartitions(Map.of())
             .build();
 
-        List<CoordinatorRecord> expectedRecords = List.of(
+        List<List<CoordinatorRecord>> expectedRecords = List.of(
             // The existing classic group tombstone.
-            GroupCoordinatorRecordHelpers.newGroupMetadataTombstoneRecord(groupId),
+            List.of(GroupCoordinatorRecordHelpers.newGroupMetadataTombstoneRecord(groupId)),
 
             // Create the new consumer group with member 1.
-            GroupCoordinatorRecordHelpers.newConsumerGroupMemberSubscriptionRecord(groupId, expectedMember1),
-            GroupCoordinatorRecordHelpers.newConsumerGroupEpochRecord(groupId, 0, computeGroupHash(Map.of(
+            List.of(GroupCoordinatorRecordHelpers.newConsumerGroupMemberSubscriptionRecord(groupId, expectedMember1)),
+            List.of(GroupCoordinatorRecordHelpers.newConsumerGroupEpochRecord(groupId, 0, computeGroupHash(Map.of(
                 fooTopicName, computeTopicHash(fooTopicName, metadataImage),
                 barTopicName, computeTopicHash(barTopicName, metadataImage)
-            ))),
-            GroupCoordinatorRecordHelpers.newConsumerGroupTargetAssignmentRecord(groupId, memberId1, toAssignmentWithoutEpochs(expectedMember1.assignedPartitions())),
-            GroupCoordinatorRecordHelpers.newConsumerGroupTargetAssignmentMetadataRecord(groupId, 0, 0),
-            GroupCoordinatorRecordHelpers.newConsumerGroupCurrentAssignmentRecord(groupId, expectedMember1),
+            )))),
+            List.of(GroupCoordinatorRecordHelpers.newConsumerGroupTargetAssignmentRecord(groupId, memberId1, toAssignmentWithoutEpochs(expectedMember1.assignedPartitions()))),
+            List.of(GroupCoordinatorRecordHelpers.newConsumerGroupTargetAssignmentMetadataRecord(groupId, 0, 0)),
+            List.of(GroupCoordinatorRecordHelpers.newConsumerGroupCurrentAssignmentRecord(groupId, expectedMember1)),
 
             // Member 2 joins the new consumer group.
-            GroupCoordinatorRecordHelpers.newConsumerGroupMemberSubscriptionRecord(groupId, expectedMember2),
+            List.of(GroupCoordinatorRecordHelpers.newConsumerGroupMemberSubscriptionRecord(groupId, expectedMember2)),
 
             // Newly joining member 2 bumps the group epoch. A new target assignment is computed.
-            GroupCoordinatorRecordHelpers.newConsumerGroupEpochRecord(groupId, 1, computeGroupHash(Map.of(
+            List.of(GroupCoordinatorRecordHelpers.newConsumerGroupEpochRecord(groupId, 1, computeGroupHash(Map.of(
                 fooTopicName, computeTopicHash(fooTopicName, metadataImage),
                 barTopicName, computeTopicHash(barTopicName, metadataImage)
-            ))),
-            GroupCoordinatorRecordHelpers.newConsumerGroupTargetAssignmentRecord(groupId, memberId2, assignor.targetPartitions(memberId2)),
-            GroupCoordinatorRecordHelpers.newConsumerGroupTargetAssignmentRecord(groupId, memberId1, assignor.targetPartitions(memberId1)),
-            GroupCoordinatorRecordHelpers.newConsumerGroupTargetAssignmentMetadataRecord(groupId, 1, context.time.milliseconds()),
+            )))),
+            List.of(
+                GroupCoordinatorRecordHelpers.newConsumerGroupTargetAssignmentRecord(groupId, memberId1, assignor.targetPartitions(memberId1)),
+                GroupCoordinatorRecordHelpers.newConsumerGroupTargetAssignmentRecord(groupId, memberId2, assignor.targetPartitions(memberId2))
+            ),
+            List.of(GroupCoordinatorRecordHelpers.newConsumerGroupTargetAssignmentMetadataRecord(groupId, 1, context.time.milliseconds())),
 
             // Member 2 has no pending revoking partition. Bump its member epoch and transition to UNRELEASED_PARTITIONS.
-            GroupCoordinatorRecordHelpers.newConsumerGroupCurrentAssignmentRecord(groupId, expectedMember2)
+            List.of(GroupCoordinatorRecordHelpers.newConsumerGroupCurrentAssignmentRecord(groupId, expectedMember2))
         );
 
-        assertRecordsEquals(expectedRecords, result.records());
+        assertUnorderedRecordsEquals(expectedRecords, result.records());
 
         context.assertSessionTimeout(groupId, memberId1, expectedMember1.classicProtocolSessionTimeout().get());
         context.assertSessionTimeout(groupId, memberId2, 45000);
@@ -22348,10 +22350,29 @@ public class GroupMetadataManagerTest {
             result.response().data()
         );
 
+        // A second heartbeat, still within the delay window, is needed for the topology to be
+        // configured on the group (the first join computes it on a throwaway group instance).
+        context.streamsGroupHeartbeat(
+            new StreamsGroupHeartbeatRequestData()
+                .setGroupId(groupId)
+                .setMemberId(memberId)
+                .setMemberEpoch(1)
+                .setActiveTasks(List.of())
+                .setStandbyTasks(List.of())
+                .setWarmupTasks(List.of()));
+
         assignor.prepareGroupAssignment(
                 Map.of(memberId, TaskAssignmentTestUtil.mkTasksTuple(TaskRole.ACTIVE, TaskAssignmentTestUtil.mkTasks(subtopology1, 0, 1))));
 
         context.sleep(10000);
+
+        // The delay timer firing must update the target assignment without requiring a subsequent
+        // heartbeat.
+        StreamsGroup group = context.groupMetadataManager.streamsGroup(groupId);
+        assertEquals(
+            TaskAssignmentTestUtil.mkTasksTuple(TaskRole.ACTIVE, TaskAssignmentTestUtil.mkTasks(subtopology1, 0, 1)),
+            group.targetAssignment(memberId, Optional.empty())
+        );
 
         result = context.streamsGroupHeartbeat(
             new StreamsGroupHeartbeatRequestData()
@@ -22425,6 +22446,13 @@ public class GroupMetadataManagerTest {
         assertTrue(result.response().data().activeTasks().isEmpty());
 
         context.sleep(2000);
+
+        // The delay timer firing must update the target assignment without requiring a subsequent
+        // heartbeat.
+        assertEquals(
+            TaskAssignmentTestUtil.mkTasksTuple(TaskRole.ACTIVE, TaskAssignmentTestUtil.mkTasks(subtopology1, 0, 1)),
+            group.targetAssignment(memberId, Optional.empty())
+        );
 
         result = context.streamsGroupHeartbeat(
             new StreamsGroupHeartbeatRequestData()
