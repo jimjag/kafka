@@ -16,13 +16,13 @@
  */
 package org.apache.kafka.coordinator.group.streams;
 
+import org.apache.kafka.coordinator.group.Utils;
 import org.apache.kafka.coordinator.group.api.streams.assignor.AssignmentConfigs;
 import org.apache.kafka.coordinator.group.api.streams.assignor.GroupSpec;
 import org.apache.kafka.coordinator.group.streams.assignor.AssignmentConfigsImpl;
 import org.apache.kafka.coordinator.group.streams.assignor.GroupSpecImpl;
 import org.apache.kafka.coordinator.group.streams.assignor.MemberMetadataAndStateImpl;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
@@ -46,6 +46,13 @@ public class GroupSpecBuilder {
      * fed to the assignor so it can estimate task lag.
      */
     private Map<String, MemberTaskOffsets> taskOffsets = Map.of();
+
+    /**
+     * Whether the {@link GroupSpec} produced by {@link GroupSpecBuilder#build()} will be used on a
+     * background thread. When {@code true}, {@link GroupSpecBuilder#build()} takes copies of any
+     * mutable collections, so that subsequent changes are not visible to the assignor.
+     */
+    private boolean assignorOffload;
 
     /**
      * Constructs the object.
@@ -103,18 +110,36 @@ public class GroupSpecBuilder {
     }
 
     /**
+     * Sets whether the {@link GroupSpec} produced by {@link GroupSpecBuilder#build()} will be used
+     * on a background thread. When {@code true}, {@link GroupSpecBuilder#build()} takes copies of
+     * any mutable collections, so that subsequent changes are not visible to the assignor.
+     *
+     * @param assignorOffload Whether the produced {@link GroupSpec} will be consumed on a
+     *                        background thread.
+     * @return This object.
+     */
+    public GroupSpecBuilder withAssignorOffload(boolean assignorOffload) {
+        this.assignorOffload = assignorOffload;
+        return this;
+    }
+
+    /**
      * Builds the {@link GroupSpec} to be passed to the assignor.
      *
      * @return The {@link GroupSpec} describing the members and their existing assignments.
      */
     public GroupSpec build() {
-        Map<String, MemberMetadataAndStateImpl> memberMetadataMap = new HashMap<>();
+        Map<String, MemberMetadataAndStateImpl> memberMetadataMap = Utils.newHashMap(members.size());
 
         // Prepare the member metadata for all members.
         members.forEach((memberId, member) -> memberMetadataMap.put(memberId, createMemberMetadataAndState(
             member,
             taskOffsets.getOrDefault(memberId, MemberTaskOffsets.EMPTY)
         )));
+
+        if (assignorOffload) {
+            // There are currently no inputs to the assignor that require a deep copy here.
+        }
 
         return new GroupSpecImpl(
             memberMetadataMap,
