@@ -493,9 +493,9 @@ public class GroupMetadataManager {
     private final Map<String, ConsumerGroupPartitionAssignor> consumerGroupAssignors;
 
     /**
-     * The default consumer group assignor used.
+     * The names of the supported consumer group partition assignors in the configured order.
      */
-    private final ConsumerGroupPartitionAssignor defaultConsumerGroupAssignor;
+    private final List<String> consumerGroupAssignorNames;
 
     /**
      * The groups keyed by their name.
@@ -597,7 +597,11 @@ public class GroupMetadataManager {
             .consumerGroupAssignors()
             .stream()
             .collect(Collectors.toMap(ConsumerGroupPartitionAssignor::name, Function.identity()));
-        this.defaultConsumerGroupAssignor = config.consumerGroupAssignors().get(0);
+        this.consumerGroupAssignorNames = config
+            .consumerGroupAssignors()
+            .stream()
+            .map(ConsumerGroupPartitionAssignor::name)
+            .toList();
         this.groups = new TimelineHashMap<>(snapshotRegistry, 0);
         this.groupsByTopics = new TimelineHashMap<>(snapshotRegistry, 0);
         this.shareGroupStatePartitionMetadata = new TimelineHashMap<>(snapshotRegistry, 0);
@@ -659,6 +663,8 @@ public class GroupMetadataManager {
      * @param typesFilter       The types of the groups we want to list.
      *                          If empty, all groups are returned with their type.
      *                          If invalid, no groups are returned.
+     * @param groupIdFilter     The predicate on the ids of the groups we want to list.
+     *                          It is applied after the states and types filters.
      * @param committedOffset   A specified committed offset corresponding to this shard.
      *
      * @return A list containing the ListGroupsResponseData.ListedGroup
@@ -666,6 +672,7 @@ public class GroupMetadataManager {
     public List<ListGroupsResponseData.ListedGroup> listGroups(
         Set<String> statesFilter,
         Set<String> typesFilter,
+        Predicate<String> groupIdFilter,
         long committedOffset
     ) {
         // Converts each state filter string to lower case for a case-insensitive comparison.
@@ -683,7 +690,7 @@ public class GroupMetadataManager {
             boolean stateCheck = statesFilter.isEmpty() || group.isInStates(caseInsensitiveFilterSet, committedOffset);
             boolean typeCheck = enumTypesFilter.isEmpty() || enumTypesFilter.contains(group.type());
 
-            return stateCheck && typeCheck;
+            return stateCheck && typeCheck && groupIdFilter.test(group.groupId());
         };
 
         Stream<Group> groupStream = groups.values(committedOffset).stream();
@@ -711,7 +718,7 @@ public class GroupMetadataManager {
             try {
                 describedGroups.add(consumerGroup(groupId, committedOffset).asDescribedGroup(
                     committedOffset,
-                    defaultConsumerGroupAssignor.name(),
+                    consumerGroupAssignorNames,
                     metadataImage
                 ));
             } catch (GroupIdNotFoundException exception) {
@@ -3760,9 +3767,16 @@ public class GroupMetadataManager {
         ConsumerGroupMember member,
         ConsumerGroupMember updatedMember
     ) {
-        String defaultAssignorName = defaultConsumerGroupAssignor.name();
-        String currentPreferredAssignor = group.preferredServerAssignor().orElse(defaultAssignorName);
-        String newPreferredAssignor = group.computePreferredServerAssignor(member, updatedMember).orElse(defaultAssignorName);
+        if (member.serverAssignorName().equals(updatedMember.serverAssignorName())) {
+            return false;
+        }
+
+        String currentPreferredAssignor = group.preferredServerAssignor(consumerGroupAssignorNames);
+        String newPreferredAssignor = group.computePreferredServerAssignor(
+            member,
+            updatedMember,
+            consumerGroupAssignorNames
+        );
         return !currentPreferredAssignor.equals(newPreferredAssignor);
     }
 
@@ -4406,8 +4420,9 @@ public class GroupMetadataManager {
 
         String preferredServerAssignor = group.computePreferredServerAssignor(
             member,
-            updatedMember
-        ).orElse(defaultConsumerGroupAssignor.name());
+            updatedMember,
+            consumerGroupAssignorNames
+        );
         try {
             UpdatedMembersAndTargetAssignmentView<ConsumerGroupMember, Assignment> updatedMembersAndTargetAssignment =
                 new UpdatedMembersAndTargetAssignmentView<>(
