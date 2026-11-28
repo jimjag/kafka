@@ -1497,8 +1497,6 @@ public class GroupMetadataManager {
      * @return The created ConsumerGroup.
      */
     ConsumerGroup convertToConsumerGroup(ClassicGroup classicGroup, List<CoordinatorRecord> records) {
-        // The upgrade is always triggered by a new member joining the classic group, which always results in
-        // updatedMember.subscribedTopicNames changing, the group epoch being bumped, and triggering a new rebalance.
         // If the ClassicGroup is rebalancing, inform the awaiting consumers of another ongoing rebalance
         // so that they will rejoin for the new rebalance.
         classicGroup.completeAllJoinFutures(Errors.REBALANCE_IN_PROGRESS);
@@ -7772,11 +7770,14 @@ public class GroupMetadataManager {
                 // The empty consumer groups should be converted to classic groups in classicGroupJoinToClassicGroup.
                 return cleanupNotNeeded(classicGroupJoinToConsumerGroup((ConsumerGroup) group, context, request, responseFuture));
             } else if (group.type() == STREAMS && group.isEmpty()) {
-                if (!topologyCleanupHandled && ((StreamsGroup) group).mayHaveTopologyDescription()) {
-                    // A classic join converts this empty streams group to classic and deletes its streams
-                    // metadata. If the topology-description plugin (KIP-1331) may still hold a topology for the
-                    // group, that data would be orphaned. So change nothing and return TRUE. The caller deletes
-                    // the topology from the plugin, then calls again with topologyCleanupHandled = true to convert.
+                // A classic join converts this empty streams group to classic and deletes its streams
+                // metadata. If the topology-description plugin (KIP-1331) may still hold a topology for the
+                // group, that data would be orphaned. So change nothing and return TRUE. The caller deletes
+                // the topology from the plugin, then calls again with topologyCleanupHandled = true to convert.
+                // A join with a known member id keeps the group, so it needs no cleanup.
+                if (!topologyCleanupHandled
+                    && UNKNOWN_MEMBER_ID.equals(request.memberId())
+                    && ((StreamsGroup) group).mayHaveTopologyDescription()) {
                     return new CoordinatorResult<>(List.of(), Boolean.TRUE);
                 }
                 // Empty streams groups are converted to classic groups in classicGroupJoinToClassicGroup.
@@ -7823,7 +7824,7 @@ public class GroupMetadataManager {
         JoinGroupRequestData request,
         CompletableFuture<JoinGroupResponseData> responseFuture
     ) {
-        CoordinatorResult<Void, CoordinatorRecord> result = EMPTY_RESULT;
+        CoordinatorResult<Void, CoordinatorRecord> result;
         List<CoordinatorRecord> records = new ArrayList<>();
 
         String groupId = request.groupId();
@@ -7834,10 +7835,15 @@ public class GroupMetadataManager {
         // is specified but the group does not exist, the request is rejected with
         // UNKNOWN_MEMBER_ID.
         ClassicGroup group;
-        if (maybeDeleteEmptyConsumerGroup(groupId, records)) {
-            log.info("[GroupId {}] Converted the empty consumer group to a classic group.", groupId);
-        } else if (maybeDeleteEmptyStreamsGroup(groupId, records)) {
-            log.info("[GroupId {}] Converted the empty streams group to a classic group.", groupId);
+        // Only a request with an unknown member id can create the classic group below, so only
+        // such a request deletes an empty consumer or streams group to make room for it. A request
+        // with a known member id is rejected with UNKNOWN_MEMBER_ID and keeps the group.
+        if (isUnknownMember) {
+            if (maybeDeleteEmptyConsumerGroup(groupId, records)) {
+                log.info("[GroupId {}] Converted the empty consumer group to a classic group.", groupId);
+            } else if (maybeDeleteEmptyStreamsGroup(groupId, records)) {
+                log.info("[GroupId {}] Converted the empty streams group to a classic group.", groupId);
+            }
         }
         boolean isNewGroup = !groups.containsKey(groupId);
         try {
@@ -7852,10 +7858,12 @@ public class GroupMetadataManager {
 
         if (!acceptJoiningMember(group, memberId)) {
             group.remove(memberId);
+            timer.cancel(classicGroupHeartbeatKey(groupId, memberId));
             responseFuture.complete(new JoinGroupResponseData()
                 .setMemberId(UNKNOWN_MEMBER_ID)
                 .setErrorCode(Errors.GROUP_MAX_SIZE_REACHED.code())
             );
+            result = maybeCompleteJoinPhase(group);
         } else if (isUnknownMember) {
             result = classicGroupJoinNewMember(
                 context,
@@ -8590,7 +8598,7 @@ public class GroupMetadataManager {
     ) {
         // If any members are awaiting sync, cancel their request and have them rejoin.
         if (group.isInState(COMPLETING_REBALANCE)) {
-            resetAndPropagateAssignmentWithError(group, Errors.REBALANCE_IN_PROGRESS);
+            propagateError(group, Errors.REBALANCE_IN_PROGRESS);
         }
 
         // If a sync expiration is pending, cancel it.
@@ -8690,18 +8698,18 @@ public class GroupMetadataManager {
     }
 
     /**
-     * Reset assignment for all members and propagate the error to all members in the group.
+     * Propagate the error to all members in the group. The members keep their assignment
+     * because they may still own its partitions.
      *
      * @param group  The group.
      * @param error  The error to propagate.
      */
-    private void resetAndPropagateAssignmentWithError(ClassicGroup group, Errors error) {
+    private void propagateError(ClassicGroup group, Errors error) {
         if (!group.isInState(COMPLETING_REBALANCE)) {
             throw new IllegalStateException("Group " + group.groupId() + " must be in " + COMPLETING_REBALANCE.name() +
                 " state but is in " + group.currentState() + ".");
         }
 
-        group.allMembers().forEach(member -> member.setAssignment(EMPTY_ASSIGNMENT));
         propagateAssignment(group, error);
     }
 
@@ -8724,7 +8732,8 @@ public class GroupMetadataManager {
     }
 
     /**
-     * Propagate assignment and error to all members.
+     * Propagate the assignment or the error to all members. A member gets an empty assignment
+     * with an error.
      *
      * @param group  The group.
      * @param error  The error to propagate.
@@ -8747,7 +8756,7 @@ public class GroupMetadataManager {
                 new SyncGroupResponseData()
                     .setProtocolName(protocolName.orElse(null))
                     .setProtocolType(protocolType.orElse(null))
-                    .setAssignment(member.assignment())
+                    .setAssignment(error == Errors.NONE ? member.assignment() : EMPTY_ASSIGNMENT)
                     .setErrorCode(error.code()))) {
 
                 // Reset the session timeout for members after propagating the member's assignment.
@@ -9111,7 +9120,7 @@ public class GroupMetadataManager {
                     if (group.isInState(COMPLETING_REBALANCE) && request.generationId() == group.generationId()) {
                         if (t != null) {
                             Errors error = appendGroupMetadataErrorToResponseError(Errors.forException(t));
-                            resetAndPropagateAssignmentWithError(group, error);
+                            propagateError(group, error);
                             maybePrepareRebalanceOrCompleteJoin(group, "Error " + error + " when storing group assignment " +
                                 "during SyncGroup (member: " + memberId + ").");
                         } else {
